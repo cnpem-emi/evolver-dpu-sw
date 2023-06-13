@@ -29,7 +29,7 @@ STIR_INITIAL = [8] * 16 #try 8,10,12 etc; makes 16-value list
 #STIR_INITIAL = [7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10]
 
 VOLUME =  25 #mL, determined by vial cap straw length
-OPERATION_MODE = 'chemostat' #use to choose between 'turbidostat' and 'chemostat' functions
+OPERATION_MODE = 'turbidostat' #use to choose between 'turbidostat' and 'chemostat' functions
 # if using a different mode, name your function as the OPERATION_MODE variable
 
 ##### END OF USER DEFINED GENERAL SETTINGS #####
@@ -163,14 +163,14 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
 
     ##### USER DEFINED VARIABLES #####
     start_OD = [0] * 16 # ~OD600, set to 0 to start chemostate dilutions at any positive OD
-    start_time = [0.01] * 16 #hours, set 0 to start immediately
+    start_time = [0] * 16 #hours, set 0 to start immediately
     # Note that script uses AND logic, so both start time and start OD must be surpassed
 
     OD_values_to_average = 6  # Number of values to calculate the OD average
 
     chemostat_vials = vials #vials is all 16, can set to different range (ex. [0,1,2,3]) to only trigger tstat on those vials
 
-    rate_config = [10] * 16 #to set all vials to the same value, creates 16-value list
+    rate_config = [0.5] * 16 #to set all vials to the same value, creates 16-value list
     stir = [8] * 16
     #UNITS of 1/hr, NOT mL/hr, rate = flowrate/volume, so dilution rate ~ growth rate, set to 0 for unused vials
 
@@ -180,7 +180,6 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
     ##### END OF USER DEFINED VARIABLES #####
 
     if eVOLVER.experiment_params is not None:
-        print(eVOLVER.experiment_params)
         rate_config = list(map(lambda x: x['rate'], eVOLVER.experiment_params['vial_configuration']))
         stir = list(map(lambda x: x['stir'], eVOLVER.experiment_params['vial_configuration']))
         start_time= list(map(lambda x: x['startTime'], eVOLVER.experiment_params['vial_configuration']))
@@ -194,7 +193,6 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
     ##### End of Chemostat Settings #####
 
     flow_rate = eVOLVER.get_flow_rate() #read from calibration file
-    print("Flow rate {}".format(flow_rate))
     period_config = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0] #initialize array
     bolus_in_s = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0] #initialize array
 
@@ -202,6 +200,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
     ##### Chemostat Control Code Below #####
 
     for x in chemostat_vials: #main loop through each vial
+
         # Update chemostat configuration files for each vial
 
         #initialize OD and find OD path
@@ -226,24 +225,17 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
             last_chemophase = chemo_config[len(chemo_config)-1][1] #should be zero initially, changes each time a new command is written to file
             last_chemorate = chemo_config[len(chemo_config)-1][2] #should be 0 initially, then period in seconds after new commands are sent
 
-            print("Last chemoset {}".format(last_chemoset))
-            print("Last chemophase {}".format(last_chemophase))
-            print("Last chemorate {}".format(last_chemorate))
-
             # once start time has passed and culture hits start OD, if no command has been written, write new chemostat command to file
-            if ((elapsed_time > start_time[x])): # and (average_OD > start_OD[x])):
+            if ((elapsed_time > start_time[x]) and (average_OD > start_OD[x])):
 
                 #calculate time needed to pump bolus for each pump
                 bolus_in_s[x] = bolus/flow_rate[x]
-                print(bolus_in_s[x])
 
                 # calculate the period (i.e. frequency of dilution events) based on user specified growth rate and bolus size
                 if rate_config[x] > 0:
                     period_config[x] = (3600*bolus)/((rate_config[x])*VOLUME) #scale dilution rate by bolus size and volume
                 else: # if no dilutions needed, then just loops with no dilutions
                     period_config[x] = 0
-
-                print(period_config[x])
 
                 if  (last_chemorate != period_config[x]):
                     print('Chemostat updated in vial {0}'.format(x))

@@ -68,7 +68,7 @@ def broadcast():
             ready = select.select([broadcastSocket], [], [], 2)
             if ready[0]:
                         data = broadcastSocket.recv(4096)
-                        data = json.loads(data)
+                        print(json.loads(data))
                         EVOLVER_NS.on_broadcast(data)
 
         time.sleep(1)
@@ -113,14 +113,13 @@ class EvolverNamespace():
 
 
     def on_broadcast(self, data):
-        print('Broadcast received')
+        logger.info('Broadcast received')
         elapsed_time = round((time.time() - self.start_time) / 3600, 4)
-        print('Elapsed time: %.4f hours' % elapsed_time)
+        logger.info('Elapsed time: %.4f hours' % elapsed_time)
         print("{0}: {1} Hours".format(EXP_NAME, elapsed_time))
         # are the calibrations in yet?
         if not self.check_for_calibrations():
-            print(OD_CAL_PATH)
-            print('Calibration files still missing, skipping custom '
+            logger.warning('Calibration files still missing, skipping custom '
                            'functions')
             return
 
@@ -145,30 +144,23 @@ class EvolverNamespace():
             self.OD_initial = np.zeros(len(VIALS))
         data['transformed']['od'] = (data['transformed']['od'] -
                                         self.OD_initial)
-
-
         # save data
         try:
             self.save_data(data['transformed']['od'], elapsed_time,
                             VIALS, 'OD')
             self.save_data(data['transformed']['temp'], elapsed_time,
                             VIALS, 'temp')
-            
 
             for param in od_cal['params']:
                 self.save_data(data['data'].get(param, []), elapsed_time,
                             VIALS, param + '_raw')
-
             for param in temp_cal['params']:
-                print(data['data'].get(param, []))
                 self.save_data(data['data'].get(param, []), elapsed_time,
                             VIALS, param + '_raw')
         except OSError:
             logger.info("Broadcast received before experiment initialization - skipping custom function...")
             return
-        print("Data: {}".format(data))
-        print("VIALS: {}".format(VIALS))
-        print("elapsed_time: {}".format(elapsed_time))
+
         # run custom functions
         self.custom_functions(data, VIALS, elapsed_time)
         # save variables
@@ -227,7 +219,6 @@ class EvolverNamespace():
         od_data = data['data'].get(od_cal['params'][0], None)
         temp_data = data['data'].get(temp_cal['params'][0], None)
         set_temp_data = data['config'].get('temp', {}).get('value', None)
-
 
         if od_data is None or temp_data is None or set_temp_data is None:
             print('Incomplete data recieved, Error with measurement')
@@ -305,7 +296,6 @@ class EvolverNamespace():
         # update temperatures only if difference with expected
         # value is above 0.2 degrees celsius
         delta_t = np.abs(set_temp_data - temps).max()
-
         if delta_t > 0.2:
             logger.info('updating temperatures (max. deltaT is %.2f)' %
                         delta_t)
@@ -366,16 +356,15 @@ class EvolverNamespace():
                 # efflux
                 MESSAGE['value'][x + 16] = '0|0'
             else:
-                # influx 1
+                # influx
                 MESSAGE['value'][x] = '%.2f|%d' % (bolus_in_s[x], period_config[x])
-                # influx 21
-                MESSAGE['value'][x + 16] = '%.2f|%d' % (bolus_in_s[x], period_config[x])
                 # efflux
-                MESSAGE['value'][x + 32] = '%.2f|%d' % (bolus_in_s[x] * 2,
+                MESSAGE['value'][x + 16] = '%.2f|%d' % (bolus_in_s[x] * 2,
                                                         period_config[x])
+
         if MESSAGE['value'] != current_pump:
-            print('updating chemostat: %s' % MESSAGE)
-            self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(MESSAGE), 'utf-8') + b'\r\n')
+            logger.info('updating chemostat: %s' % MESSAGE)
+            self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
 
     def stop_all_pumps(self, ):
         data = {'param': 'pump',
@@ -438,9 +427,7 @@ class EvolverNamespace():
 
             logger.debug('creating data directories')
             os.makedirs(os.path.join(EXP_DIR, 'OD'))
-            os.makedirs(os.path.join(EXP_DIR, 'od_135_raw'))
             os.makedirs(os.path.join(EXP_DIR, 'temp'))
-            os.makedirs(os.path.join(EXP_DIR, 'temp_raw'))
             os.makedirs(os.path.join(EXP_DIR, 'temp_config'))
             os.makedirs(os.path.join(EXP_DIR, 'pump_log'))
             os.makedirs(os.path.join(EXP_DIR, 'ODset'))
@@ -453,10 +440,8 @@ class EvolverNamespace():
                                                            time.strftime("%c"))
                 # make OD file
                 self._create_file(x, 'OD', defaults=[exp_str])
-                self._create_file(x, 'od_135_raw')
                 # make temperature data file
                 self._create_file(x, 'temp')
-                self._create_file(x, 'temp_raw')
                 # make temperature configuration file
                 self._create_file(x, 'temp_config',
                                   defaults=[exp_str,

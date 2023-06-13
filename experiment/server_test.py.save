@@ -8,13 +8,8 @@ import time
 STIR_VALUES = [[0] * 16, [4000] * 16] # flip between on and off
 TEMP_VALUES = [4095] * 16 # always off
 
-EVOLVER_IP = '127.0.0.1'
-EVOLVER_PORT = 8081
-
-global evolver_ns, socketIO
-socketIO = SocketIO(EVOLVER_IP, EVOLVER_PORT)
-evolver_ns = socketIO.define(EvolverNamespace, '/dpu-evolver')
-
+EVOLVER_IP = '10.0.6.69'
+EVOLVER_PORT = 6001
 
 class EvolverNamespace(BaseNamespace):
     def on_connect(self, *args):
@@ -66,9 +61,9 @@ if __name__ == '__main__':
 	    t = Thread(target = start_background_loop, args = (new_loop,))
 	    t.daemon = True
 	    t.start()
-	    new_loop.call_soon_threadsafe(run_client)
-	    print("Sleeping")
-	    time.sleep(5)
+	    run_client)
+
+	    time.sleep(10)
 	    run_test(0, 0)
 	except KeyboardInterrupt:
 		socketIO.disconnect()
