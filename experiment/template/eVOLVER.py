@@ -12,6 +12,9 @@ import json
 import select
 import socket
 import traceback
+import asyncio
+import socketio
+from multi_server import MultiServer
 #from scipy import stats
 from consts import functions
 from threading import Thread
@@ -50,8 +53,10 @@ EVOLVER_PORT = 6001
 
 global broadcastSocket
 global broadcastReady
+global sio
 broadcastSocket = None
 broadcastReady = False
+sio = socketio.AsyncServer(async_handlers=True)
 
 
 
@@ -61,6 +66,7 @@ broadcastReady = False
 def broadcast():
     global broadcastSocket
     global broadcastReady
+    global sio
     global EVOLVER_NS
 
     while True:
@@ -69,10 +75,56 @@ def broadcast():
             if ready[0]:
                         data = broadcastSocket.recv(4096)
                         data = json.loads(data)
-                        EVOLVER_NS.on_broadcast(data)
-
+                        EVOLVER_NS.broadcast(data)
+                        broadcast_io(data)
         time.sleep(1)
                         
+
+
+async def broadcast_io(data):
+    await sio.emit('broadcast', data, namespace = '/dpu-evolver')
+
+
+@sio.on('connect', namespace = '/dpu-evolver')
+async def on_connect(sid, environ):
+    print('Connected dpu as server', flush = True)
+
+@sio.on('disconnect', namespace = '/dpu-evolver')
+async def on_disconnect(sid):
+    print('Disconnected dpu as Server', flush = True)
+
+@sio.on('command', namespace = '/dpu-evolver')
+async def on_command(sid, data):
+
+    EVOLVER_NS.send_command(data)
+
+    await sio.emit('commandbroadcast', data, namespace = '/dpu-evolver')
+
+
+@sio.on('getfitnames', namespace = '/dpu-evolver')
+async def on_getfitnames(sid, data):
+    fit_names = []
+    print("Retrieving fit names...", flush = True)
+    try:
+        calibrations = EVOLVER_NS.getfitnames()
+        for calibration in calibrations:
+            for fit in calibration['fits']:
+                fit_names.append({'name': fit['name'], 'calibrationType': calibration['calibrationType']})
+    except:
+        pass
+
+    await sio.emit("fitnames", fit_names, namespace = '/dpu-evolver')
+
+
+
+@sio.on('setfitcalibration', namespace = '/dpu-evolver')
+async def on_setfitcalibrations(sid, data):
+    try:
+        EVOLVER_NS.setfitcalibration(data)
+    except:
+        pass
+
+
 
 
 
@@ -112,7 +164,28 @@ class EvolverNamespace():
         logger.info('disconnected to eVOLVER as client')
 
 
-    def on_broadcast(self, data):
+    def send_command(self, data):
+        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
+
+    def getfitnames(self):
+        self.s.send(functions['getfitnames']['id'].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = json.loads(self.s.recv(30000)[:-2])
+                break
+            else:
+                time.sleep(1)
+        return info
+
+
+    def setfitcalibration(self, data):
+        self.s.send(functions['setfitcalibration']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
+
+
+
+    def broadcast(self, data):
         print('Broadcast received')
         elapsed_time = round((time.time() - self.start_time) / 3600, 4)
         print('Elapsed time: %.4f hours' % elapsed_time)
@@ -178,7 +251,7 @@ class EvolverNamespace():
         logging.shutdown()
         logging.getLogger('eVOLVER')
 
-    def on_activecalibrations(self, data):
+    def activecalibrations(self, data):
         print('Calibrations recieved')
         logger.info('Calibrations recieved')
         for calibration in data:
@@ -739,6 +812,14 @@ if __name__ == '__main__':
     # broadcast thread
     bServer = Thread(target=broadcast)
     bServer.start()
+
+    # Set up the socketIO
+    server_loop = asyncio.new_event_loop()
+    ms = MultiServer(loop=server_loop)
+    app1 = ms.add_app(port = 8081)
+    sio.attach(app1)
+    ms.run_all()
+
 
     # logging setup
 
