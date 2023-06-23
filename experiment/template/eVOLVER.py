@@ -35,6 +35,8 @@ OD_CAL_PATH = os.path.join(SAVE_PATH, 'od_cal.json')
 TEMP_CAL_PATH = os.path.join(SAVE_PATH, 'temp_cal.json')
 PUMP_CAL_PATH = os.path.join(SAVE_PATH, 'pump_cal.json')
 JSON_PARAMS_FILE = os.path.join(SAVE_PATH, 'eVOLVER_parameters.json')
+CHANNEL_INDEX_PATH = os.path.join(SAVE_PATH, 'channel_index.json')
+
 
 SIGMOID = 'sigmoid'
 LINEAR = 'linear'
@@ -59,7 +61,9 @@ broadcastReady = False
 sio = socketio.AsyncServer(async_handlers=True)
 
 
-
+global channelIdx
+with open(CHANNEL_INDEX_PATH) as f:
+    channelIdx = json.load(f)
 
 
 
@@ -95,8 +99,15 @@ async def on_disconnect(sid):
 
 @sio.on('command', namespace = '/dpu-evolver')
 async def on_command(sid, data):
+    global command_queue, evolver_conf
+    print('Received COMMAND', flush = True)
+    param = data.get('param', None)
+    value = data.get('value', None)
+    immediate = data.get('immediate', None)
+    recurring = data.get('recurring', None)
+    fields_expected_outgoing = data.get('fields_expected_outgoing', None)
+    fields_expected_incoming = data.get('fields_expected_incoming', None)
 
-    EVOLVER_NS.send_command(data)
 
     await sio.emit('commandbroadcast', data, namespace = '/dpu-evolver')
 
@@ -106,10 +117,11 @@ async def on_getfitnames(sid, data):
     fit_names = []
     print("Retrieving fit names...", flush = True)
     try:
-        calibrations = EVOLVER_NS.getfitnames()
-        for calibration in calibrations:
-            for fit in calibration['fits']:
-                fit_names.append({'name': fit['name'], 'calibrationType': calibration['calibrationType']})
+        with open(os.path.join(LOCATION, CALIBRATIONS_FILENAME)) as f:
+            calibrations = json.load(f)
+            for calibration in calibrations:
+                for fit in calibration['fits']:
+                    fit_names.append({'name': fit['name'], 'calibrationType': calibration['calibrationType']})
     except:
         pass
 
@@ -119,8 +131,29 @@ async def on_getfitnames(sid, data):
 
 @sio.on('setfitcalibration', namespace = '/dpu-evolver')
 async def on_setfitcalibrations(sid, data):
+    """
+        Set a fit calibration into the calibration file. data should contain a `fit` key/value
+        formatted according to the cal schema `fit` object. This function will add the fit into the
+        fits list for a given calibration.
+    """
     try:
-        EVOLVER_NS.setfitcalibration(data)
+        calibrations = []
+        with open(os.path.join(LOCATION, CALIBRATIONS_FILENAME)) as f:
+            calibrations = json.load(f)
+            for calibration in calibrations:
+                if calibration["name"] == data["name"]:
+                    if calibration.get("fits", None) is not None:
+                        index_to_delete = -1
+                        for i, fit in enumerate(calibration['fits']):
+                            if fit["name"] == data["fit"]["name"]:
+                                index_to_delete = i
+                        if index_to_delete >= 0:
+                            del calibrations["fits"][index_to_delete]
+                        calibration["fits"].append(data["fit"])
+                    else:
+                        calibration["fits"] = [].append(data["fit"])
+        with open(os.path.join(LOCATION, CALIBRATIONS_FILENAME), 'w') as f:
+            json.dump(calibrations, f)
     except:
         pass
 
@@ -131,6 +164,7 @@ async def on_setfitcalibrations(sid, data):
 class EvolverNamespace():
     global broadcastSocket
     global broadcastReady
+    global channelIdx
 
     start_time = None
     use_blank = False
@@ -164,27 +198,6 @@ class EvolverNamespace():
         logger.info('disconnected to eVOLVER as client')
 
 
-    def send_command(self, data):
-        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
-
-    def getfitnames(self):
-        self.s.send(functions['getfitnames']['id'].to_bytes(1,'big') + b'\r\n')
-        time.sleep(1)
-        for _ in range(3):
-            ready = select.select([self.s], [], [], 2)
-            if ready[0]:
-                info = json.loads(self.s.recv(30000)[:-2])
-                break
-            else:
-                time.sleep(1)
-        return info
-
-
-    def setfitcalibration(self, data):
-        self.s.send(functions['setfitcalibration']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
-
-
-
     def broadcast(self, data):
         print('Broadcast received')
         elapsed_time = round((time.time() - self.start_time) / 3600, 4)
@@ -205,6 +218,7 @@ class EvolverNamespace():
         # apply calibrations
         # update temperatures if needed
         data = self.transform_data(data, VIALS, od_cal, temp_cal)
+        print(data)
         if data is None:
             logger.error('could not tranform raw data, skipping user-'
                          'defined functions')
@@ -233,14 +247,11 @@ class EvolverNamespace():
                             VIALS, param + '_raw')
 
             for param in temp_cal['params']:
-                print(data['data'].get(param, []))
                 self.save_data(data['data'].get(param, []), elapsed_time,
                             VIALS, param + '_raw')
         except OSError:
             logger.info("Broadcast received before experiment initialization - skipping custom function...")
             return
-        print("Data: {}".format(data))
-        print("VIALS: {}".format(VIALS))
         print("elapsed_time: {}".format(elapsed_time))
         # run custom functions
         self.custom_functions(data, VIALS, elapsed_time)
@@ -299,6 +310,8 @@ class EvolverNamespace():
 
         od_data = data['data'].get(od_cal['params'][0], None)
         temp_data = data['data'].get(temp_cal['params'][0], None)
+        temp_value = [0]*16
+        od_value = [0]*16
         set_temp_data = data['config'].get('temp', {}).get('value', None)
 
 
@@ -326,43 +339,46 @@ class EvolverNamespace():
             temps.append(temp_set)
             od_coefficients = od_cal['coefficients'][x]
             temp_coefficients = temp_cal['coefficients'][x]
+            index_value = channelIdx[str(x)]["channel"]
+
             try:
                 if od_cal['type'] == SIGMOID:
                     #convert raw photodiode data into ODdata using calibration curve
-                    od_data[x] = np.real(od_coefficients[2] -
+                    od_value[x] = np.real(od_coefficients[2] -
                                         ((np.log10((od_coefficients[1] -
                                                     od_coefficients[0]) /
-                                                    (float(od_data[x]) -
+                                                    (float(od_data[index_value]) -
                                                     od_coefficients[0])-1)) /
                                                     od_coefficients[3]))
                     if not np.isfinite(od_data[x]):
-                        od_data[x] = 'NaN'
-                        logger.debug('OD from vial %d: %s' % (x, od_data[x]))
+                        od_value[x] = np.nan
+                        logger.debug('OD from vial %d: %s' % (x, od_value[x]))
                     else:
-                        logger.debug('OD from vial %d: %.3f' % (x, od_data[x]))
+                        logger.debug('OD from vial %d: %.3f' % (x, od_value[x]))
                 elif od_cal['type'] == THREE_DIMENSION:
-                    od_data[x] = np.real(od_coefficients[0] +
-                                        (od_coefficients[1]*od_data[x]) +
-                                        (od_coefficients[2]*od_data_2[x]) +
-                                        (od_coefficients[3]*(od_data[x]**2)) +
-                                        (od_coefficients[4]*od_data[x]*od_data_2[x]) +
-                                        (od_coefficients[5]*(od_data_2[x]**2)))
+                    od_value[x] = np.real(od_coefficients[0] +
+                                        (od_coefficients[1]*od_data[index_value]) +
+                                        (od_coefficients[2]*od_data_2[index_value]) +
+                                        (od_coefficients[3]*(od_data[index_value]**2)) +
+                                        (od_coefficients[4]*od_data[x]*od_data_2[index_value]) +
+                                        (od_coefficients[5]*(od_data_2[index_value]**2)))
                 else:
                     logger.error('OD calibration not of supported type!')
-                    od_data[x] = 'NaN'
+                    od_value[x] = np.nan
             except ValueError:
                 print("OD Read Error")
                 logger.error('OD read error for vial %d, setting to NaN' % x)
-                od_data[x] = 'NaN'
+                od_value[x] = np.nan
             try:
-                temp_data[x] = (float(temp_data[x]) *
+                temp_value[x] = temp_data[channelIdx[str(x)]["channel"]]
+                temp_value[x] = (float(temp_value[x]) *
                                 temp_coefficients[0]) + temp_coefficients[1]
-                logger.debug('temperature from vial %d: %.3f' % (x, temp_data[x]))
+                #print('temperature from vial %d: %.3f' % (x, temp_value[x]))
             except ValueError:
                 print("Temp Read Error")
                 logger.error('temperature read error for vial %d, setting to NaN'
                             % x)
-                temp_data[x]  = 'NaN'
+                temp_value[x]  = 'NaN'
             try:
                 set_temp_data[x] = (float(set_temp_data[x]) *
                                     temp_coefficients[0]) + temp_coefficients[1]
@@ -383,9 +399,11 @@ class EvolverNamespace():
             logger.info('updating temperatures (max. deltaT is %.2f)' %
                         delta_t)
             coefficients = temp_cal['coefficients']
-            raw_temperatures = [str(int((temps[x] - temp_cal['coefficients'][x][1]) /
+            raw_temperatures = [0]*16
+            for x in vials:
+                index = channelIdx[str(x)]["channel"]
+                raw_temperatures[index] = str(int((temps[x] - temp_cal['coefficients'][x][1]) /
                                         temp_cal['coefficients'][x][0]))
-                                for x in vials]
             self.update_temperature(raw_temperatures)
         else:
             # config from server agrees with local config
@@ -399,8 +417,8 @@ class EvolverNamespace():
 
         # add a new field in the data dictionary
         data['transformed'] = {}
-        data['transformed']['od'] = od_data
-        data['transformed']['temp'] = temp_data
+        data['transformed']['od'] = od_value
+        data['transformed']['temp'] = temp_value
         return data
 
     def update_stir_rate(self, stir_rates, immediate = False):
@@ -432,19 +450,25 @@ class EvolverNamespace():
                    'param': 'pump'}
 
         for x in vials:
+            pumpA_idx = channelIdx[str(x)]["A"]
+            pumpB_idx = channelIdx[str(x)]["B"]
+            pumpC_idx = channelIdx[str(x)]["C"]
+
             # stop pumps if period is zero
             if period_config[x] == 0:
                 # influx
-                MESSAGE['value'][x] = '0|0'
+                MESSAGE['value'][pumpA_idx] = '0|0'
+                MESSAGE['value'][pumpB_idx] = '0|0'
                 # efflux
-                MESSAGE['value'][x + 16] = '0|0'
+                MESSAGE['value'][pumpC_idx] = '0|0'
+
             else:
                 # influx 1
-                MESSAGE['value'][x] = '%.2f|%d' % (bolus_in_s[x], period_config[x])
-                # influx 21
-                MESSAGE['value'][x + 16] = '%.2f|%d' % (bolus_in_s[x], period_config[x])
+                MESSAGE['value'][pumpA_idx] = '%.2f|%.2f' % (bolus_in_s[x], period_config[x])
+                # influx 2
+                MESSAGE['value'][pumpB_idx] = '%.2f|%.2f' % (bolus_in_s[x], period_config[x])
                 # efflux
-                MESSAGE['value'][x + 32] = '%.2f|%d' % (bolus_in_s[x] * 2,
+                MESSAGE['value'][pumpC_idx] = '%.2f|%.2f' % (bolus_in_s[x] * 2,
                                                         period_config[x])
         if MESSAGE['value'] != current_pump:
             print('updating chemostat: %s' % MESSAGE)
@@ -457,6 +481,8 @@ class EvolverNamespace():
                 'immediate': True}
         logger.info('stopping all pumps')
         self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        self.update_temperature([4095]*16)
+
 
     def _create_file(self, vial, param, directory=None, defaults=None):
         if defaults is None:

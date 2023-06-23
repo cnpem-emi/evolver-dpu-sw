@@ -20,7 +20,7 @@ EVOLVER_PORT = 8081
 
 ##### Identify pump calibration files, define initial values for temperature, stirring, volume, power settings
 
-TEMP_INITIAL = [30] * 16 #degrees C, makes 16-value list
+TEMP_INITIAL = [28, 29, 30, 31, 32, 33, 34, 35] * 2 #degrees C, makes 16-value list
 #Alternatively enter 16-value list to set different values
 #TEMP_INITIAL = [30,30,30,30,32,32,32,32,34,34,34,34,36,36,36,36]
 
@@ -28,7 +28,7 @@ STIR_INITIAL = [8] * 16 #try 8,10,12 etc; makes 16-value list
 #Alternatively enter 16-value list to set different values
 #STIR_INITIAL = [7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10]
 
-VOLUME =  25 #mL, determined by vial cap straw length
+VOLUME =  45 #mL, determined by vial cap straw length
 OPERATION_MODE = 'chemostat' #use to choose between 'turbidostat' and 'chemostat' functions
 # if using a different mode, name your function as the OPERATION_MODE variable
 
@@ -170,7 +170,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
 
     chemostat_vials = vials #vials is all 16, can set to different range (ex. [0,1,2,3]) to only trigger tstat on those vials
 
-    rate_config = [10] * 16 #to set all vials to the same value, creates 16-value list
+    rate_config = [1] * 16 #to set all vials to the same value, creates 16-value list
     stir = [8] * 16
     #UNITS of 1/hr, NOT mL/hr, rate = flowrate/volume, so dilution rate ~ growth rate, set to 0 for unused vials
 
@@ -189,12 +189,11 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
     ##### Chemostat Settings #####
 
     #Tunable settings for bolus, etc. Unlikely to change between expts
-    bolus = 0.5 #mL, can be changed with great caution, 0.2 is absolute minimum
+    bolus = 0.0525 # mL, can be changed with great caution, 0.2 is absolute minimum
 
     ##### End of Chemostat Settings #####
 
     flow_rate = eVOLVER.get_flow_rate() #read from calibration file
-    print("Flow rate {}".format(flow_rate))
     period_config = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0] #initialize array
     bolus_in_s = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0] #initialize array
 
@@ -226,27 +225,26 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
             last_chemophase = chemo_config[len(chemo_config)-1][1] #should be zero initially, changes each time a new command is written to file
             last_chemorate = chemo_config[len(chemo_config)-1][2] #should be 0 initially, then period in seconds after new commands are sent
 
-            print("Last chemoset {}".format(last_chemoset))
-            print("Last chemophase {}".format(last_chemophase))
-            print("Last chemorate {}".format(last_chemorate))
+            #print("Last chemoset {}".format(last_chemoset))
+            #print("Last chemophase {}".format(last_chemophase))
+            #print("Last chemorate {}".format(last_chemorate))
 
             # once start time has passed and culture hits start OD, if no command has been written, write new chemostat command to file
             if ((elapsed_time > start_time[x])): # and (average_OD > start_OD[x])):
 
                 #calculate time needed to pump bolus for each pump
                 bolus_in_s[x] = bolus/flow_rate[x]
-                print(bolus_in_s[x])
 
                 # calculate the period (i.e. frequency of dilution events) based on user specified growth rate and bolus size
                 if rate_config[x] > 0:
-                    period_config[x] = (3600*bolus)/((rate_config[x])*VOLUME) #scale dilution rate by bolus size and volume
+#                    period_config[x] = (3600*bolus)/((rate_config[x])*VOLUME) #scale dilution rate by bolus size and volume
+                    period_config[x] = rate_config[x] #scale dilution rate by bolus size and volume
                 else: # if no dilutions needed, then just loops with no dilutions
                     period_config[x] = 0
 
-                print(period_config[x])
 
                 if  (last_chemorate != period_config[x]):
-                    print('Chemostat updated in vial {0}'.format(x))
+                    #print('Chemostat updated in vial {0}'.format(x))
                     logger.info('chemostat initiated for vial %d, period %.2f'
                                 % (x, period_config[x]))
                     # writes command to chemo_config file, for storage
