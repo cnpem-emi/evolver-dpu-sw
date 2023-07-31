@@ -140,30 +140,33 @@ class EvolverDPU():
 
 
     def broadcast(self, data: dict):
+        '''
+        This method should be called every time a new broadcast is received from evolver-server (from BBB, which communicates w/ hardware),
+        which indicates that new values are available.
+
+        This method converts raw data into real values and ask for new step from custom functions.
+        '''
         print('\nBroadcast received')
         elapsed_time = round((time.time() - self.start_time) / 3600, 4)
         print('Elapsed time: %.4f hours' % elapsed_time)
-        # are the calibrations in yet?
+
+        # Check if calibration files are available
         if not self.check_for_calibrations():
             print('Calibration files still missing, skipping custom '
                            'functions')
             return
-
         with open(OD_CAL_PATH) as f:
             od_cal = json.load(f)
         with open(TEMP_CAL_PATH) as f:
             temp_cal = json.load(f)
 
-        # apply calibrations and update temperatures if needed
-        data = self.transform_data(data, VIALS, od_cal, temp_cal)
-        print("OD: ", data["transformed"]["od"][:8])
-        print("Temp: ", data["transformed"]["temp"][:8])
-        if data is None:
-            logger.error('could not tranform raw data, skipping user-'
-                         'defined functions')
-            return
 
-        # should we "blank" the OD?
+        # Apply calibrations and update temperatures if needed
+        data = self.transform_data(data, VIALS, od_cal, temp_cal)
+
+
+
+        # Should we "blank" the OD?
         if self.use_blank and self.OD_initial is None:
             logger.info('setting initial OD reading')
             self.OD_initial = data['transformed']['od']
@@ -173,15 +176,25 @@ class EvolverDPU():
                                         self.OD_initial)
 
 
-        # save data
+        # Show data in screen
+        print("OD: ", data["transformed"]["od"][:8])
+        print("Temp: ", data["transformed"]["temp"][:8])
+        if data is None:
+            logger.error('could not tranform raw data, skipping user-'
+                         'defined functions')
+            return
+
+
+        # Save data into .csv files
         try:
+            # Transformed values, true values
             self.save_data(data['transformed']['od'], elapsed_time,
                             VIALS, 'OD')
             self.save_data(data['transformed']['temp'], elapsed_time,
                             VIALS, 'temp')
             
+            # Raw data
             raw_data = [0]*16
-
             for param in od_cal['params']:
                 # Order raw data before saving values
                 for ss in range(16):
@@ -194,11 +207,12 @@ class EvolverDPU():
                     raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
                 self.save_data(raw_data, elapsed_time, VIALS, param + '_raw')
 
-
         except OSError:
             logger.info("Broadcast received before experiment initialization - skipping custom function...")
             return
-        # run custom functions
+
+
+        # Run custom functions
         self.custom_functions(data, VIALS, elapsed_time)
 
         # save variables
@@ -207,6 +221,9 @@ class EvolverDPU():
         # Restart logging for db/gdrive syncing
         logging.shutdown()
         logging.getLogger('eVOLVER')
+
+
+        
 
     def activecalibrations(self, data):
         print('Calibrations recieved')
