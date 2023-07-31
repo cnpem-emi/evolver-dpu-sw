@@ -166,7 +166,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
     start_time = [0] * 16 #hours, set 0 to start immediately
     # Note that script uses AND logic, so both start time and start OD must be surpassed
 
-    OD_values_to_average = 6  # Number of values to calculate the OD average
+    OD_values_to_average = 3  # Number of values to calculate the OD average
 
     chemostat_vials = vials #vials is all 16, can set to different range (ex. [0,1,2,3]) to only trigger tstat on those vials
 
