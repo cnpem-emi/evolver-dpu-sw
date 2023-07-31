@@ -849,11 +849,13 @@ def get_options():
 
 if __name__ == '__main__':
 
+    # Connects to local Redis database, which will be used to communicate with SocketIO application (graphical user interface)
     redis_client = redis.StrictRedis("127.0.0.1")
 
     options, parser = get_options()
 
 
+    # Get params from JSON file
     experiment_params = None
     if os.path.exists(JSON_PARAMS_FILE):
         with open(JSON_PARAMS_FILE) as f:
@@ -891,7 +893,7 @@ if __name__ == '__main__':
     while(True):
         try:
             while(True):
-                # wait until there is a command in the list
+                # wait until there is a command in the queue (Redis variable)
                 # command = {"payload": bytes, "reply": boolean}
                 command = redis_client.brpop("socketio")
                     

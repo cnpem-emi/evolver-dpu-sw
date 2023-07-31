@@ -14,7 +14,6 @@ import socket
 import traceback
 import asyncio
 import redis
-#from scipy import stats
 from consts import functions
 from threading import Thread, Lock
 
@@ -25,9 +24,8 @@ from custom_script import OPERATION_MODE
 from custom_script import STIR, TEMP
 
 # Should not be changed
-# vials to be considered/excluded should be handled
-# inside the custom functions
 VIALS = [x for x in range(16)]
+
 
 SAVE_PATH = os.path.dirname(os.path.realpath(__file__))
 EXP_DIR = os.path.join(SAVE_PATH, EXP_NAME)
@@ -48,6 +46,7 @@ paused = False
 
 
 
+# ---- eVolver DPU entity, connects to server (hardware access) evolver-sw
 global EVOLVER_NS
 EVOLVER_NS = None
 EVOLVER_IP = '127.0.0.1'
@@ -55,58 +54,56 @@ EVOLVER_PORT = 6001
 
 global broadcastSocket
 global broadcastReady
-
-global sio
 global lock
 broadcastSocket = None
 broadcastReady = False
-lock = Lock()
-#sio = None # = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
+lock = Lock() # Lock is similar to mutex. Will only 'allow' one task to use same socket at a time
 
-# Create socket.IO Server
-#sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
-# warp with a WSGI application
-#app = socketio.ASGIApp(sio)
 
-global channelIdx
+# ----- socketio object
+global sio
+
+# ----- Redis database for eVolver unit
 global redis_client
-
 redis_client = redis.StrictRedis("127.0.0.1")
 
-
+# ----- Smart sleeves indexes (hardware differs from sw index)
+global channelIdx
 with open(CHANNEL_INDEX_PATH) as f:
     channelIdx = json.load(f)
 
 
 
 def broadcast():
+    '''
+    When receive new data from evolver-server:
+      - Update Redis key
+      - Call broadcast method for eVolver DPU, which will decide next experiment step
+    '''
     global broadcastSocket
     global broadcastReady
     global redis_client
     global lock
-
     global EVOLVER_NS
 
     while True:
         while broadcastReady:
+            
             ready = select.select([broadcastSocket], [], [], 2)
             if ready[0]:
                         data = broadcastSocket.recv(4096)
                         data = json.loads(data)
                         redis_client.set("broadcast", json.dumps(data))
                         EVOLVER_NS.broadcast(data)
-                        
-            
         time.sleep(1)
 
 
 
-class EvolverNamespace():
+class EvolverDPU():
     global broadcastSocket
     global broadcastReady
     global channelIdx
     global lock
-
 
     start_time = None
     use_blank = False
@@ -119,6 +116,9 @@ class EvolverNamespace():
         self.connect()
 
     def connect(self):
+        '''
+        Connect to evolver-server, to get/set hardware information
+        '''
         global broadcastSocket
         global broadcastReady
 
@@ -130,7 +130,6 @@ class EvolverNamespace():
         broadcastSocket.connect((EVOLVER_IP, EVOLVER_PORT+1000))
         broadcastSocket.setblocking(0)
         broadcastReady = True
-
         logger.info('connected to eVOLVER as client')
 
     def disconnect(self):
@@ -140,32 +139,34 @@ class EvolverNamespace():
         logger.info('disconnected to eVOLVER as client')
 
 
-    def broadcast(self, data):
-        print('\n\n\nBroadcast received')
+    def broadcast(self, data: dict):
+        '''
+        This method should be called every time a new broadcast is received from evolver-server (from BBB, which communicates w/ hardware),
+        which indicates that new values are available.
+
+        This method converts raw data into real values and ask for new step from custom functions.
+        '''
+        print('\nBroadcast received')
         elapsed_time = round((time.time() - self.start_time) / 3600, 4)
         print('Elapsed time: %.4f hours' % elapsed_time)
-        # are the calibrations in yet?
+
+        # Check if calibration files are available
         if not self.check_for_calibrations():
             print('Calibration files still missing, skipping custom '
                            'functions')
             return
-
         with open(OD_CAL_PATH) as f:
             od_cal = json.load(f)
         with open(TEMP_CAL_PATH) as f:
             temp_cal = json.load(f)
 
-        # apply calibrations
-        # update temperatures if needed
-        data = self.transform_data(data, VIALS, od_cal, temp_cal)
-        print("OD: ", data["transformed"]["od"][:8])
-        print("Temp: ", data["transformed"]["temp"][:8])
-        if data is None:
-            logger.error('could not tranform raw data, skipping user-'
-                         'defined functions')
-            return
 
-        # should we "blank" the OD?
+        # Apply calibrations and update temperatures if needed
+        data = self.transform_data(data, VIALS, od_cal, temp_cal)
+
+
+
+        # Should we "blank" the OD?
         if self.use_blank and self.OD_initial is None:
             logger.info('setting initial OD reading')
             self.OD_initial = data['transformed']['od']
@@ -175,28 +176,45 @@ class EvolverNamespace():
                                         self.OD_initial)
 
 
-        # save data
+        # Show data in screen
+        print("OD: ", data["transformed"]["od"][:8])
+        print("Temp: ", data["transformed"]["temp"][:8])
+        if data is None:
+            logger.error('could not tranform raw data, skipping user-'
+                         'defined functions')
+            return
+
+
+        # Save data into .csv files
         try:
+            # Transformed values, true values
             self.save_data(data['transformed']['od'], elapsed_time,
                             VIALS, 'OD')
             self.save_data(data['transformed']['temp'], elapsed_time,
                             VIALS, 'temp')
             
-
+            # Raw data
+            raw_data = [0]*16
             for param in od_cal['params']:
-                self.save_data(data['data'].get(param, []), elapsed_time,
-                            VIALS, param + '_raw')
+                # Order raw data before saving values
+                for ss in range(16):
+                    raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
+                self.save_data(raw_data, elapsed_time, VIALS, param + '_raw')
 
             for param in temp_cal['params']:
-                print(data['data'].get(param, []))
-                self.save_data(data['data'].get(param, []), elapsed_time,
-                            VIALS, param + '_raw')
+                # Order raw data before saving values
+                for ss in range(16):
+                    raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
+                self.save_data(raw_data, elapsed_time, VIALS, param + '_raw')
+
         except OSError:
             logger.info("Broadcast received before experiment initialization - skipping custom function...")
             return
 
-        # run custom functions
+
+        # Run custom functions
         self.custom_functions(data, VIALS, elapsed_time)
+
         # save variables
         self.save_variables(self.start_time, self.OD_initial)
 
@@ -204,9 +222,11 @@ class EvolverNamespace():
         logging.shutdown()
         logging.getLogger('eVOLVER')
 
-    def activecalibrations(self, data):
-        print('Calibrations recieved')
-        logger.info('Calibrations recieved')
+
+
+
+    def activecalibrations(self, data: dict):
+        print('Calibrations received')
         for calibration in data:
             if calibration['calibrationType'] == 'od':
                 file_path = OD_CAL_PATH
@@ -231,7 +251,10 @@ class EvolverNamespace():
                                 self._create_file(x, param + '_raw', defaults=[exp_str])
                     break
 
-    def request_calibrations(self):
+    def request_calibrations(self) -> dict:
+        '''
+        Request calibrations to evolver-server
+        '''
         logger.debug('requesting active calibrations')
         lock.acquire()
         self.s.send(functions['getactivecal']['id'].to_bytes(1,'big') + b'\r\n')
@@ -261,11 +284,12 @@ class EvolverNamespace():
                 time.sleep(1)
         lock.release()
         return info
-
+    
 
 
     def transform_data(self, data, vials, od_cal, temp_cal):
         od_data_2 = None
+
         if od_cal['type'] == THREE_DIMENSION:
             od_data_2 = data['data'].get(od_cal['params'][1], None)
 
@@ -382,7 +406,10 @@ class EvolverNamespace():
         data['transformed']['temp'] = temp_value
         return data
 
-    def update_stir_rate(self, stir_rates, immediate = True):
+    def update_stir_rate(self, stir_rates: list, immediate = True):
+        '''
+        Update stir values
+        '''
         data = {'param': 'stir', 'value': stir_rates,
                 'immediate': immediate, 'recurring': True}
         logger.debug('stir rate command: %s' % data)
@@ -390,8 +417,10 @@ class EvolverNamespace():
         self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
         lock.release()
 
-
-    def update_temperature(self, temperatures, immediate = True):
+    def update_temperature(self, temperatures: list, immediate = True):
+        '''
+        Update temperature values. Values in list should be raw values 0-4095
+        '''
         data = {'param': 'temp', 'value': temperatures,
                 'immediate': immediate, 'recurring': True}
         logger.debug('temperature command: %s' % data)
@@ -399,8 +428,10 @@ class EvolverNamespace():
         self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
         lock.release()
 
-
-    def fluid_command(self, MESSAGE):
+    def fluid_command(self, MESSAGE: list):
+        '''
+        Update fluids values
+        '''
         logger.debug('fluid command: %s' % MESSAGE)
         command = {'param': 'pump', 'value': MESSAGE,
                    'recurring': False ,'immediate': True}
@@ -408,8 +439,12 @@ class EvolverNamespace():
         self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
         lock.release()
 
-
-    def update_chemo(self, data, vials, bolus_in_s, period_config, immediate = True):
+    def update_chemo(self, data: dict, vials: list, bolus_in_s: list, period_config: list, immediate = True):
+        '''
+        Update chemostato operations.
+        Usually asked to be run in custom_script.
+        Currently, only changes pumps !
+        '''
         current_pump = data['config']['pump']['value']
 
         MESSAGE = {'fields_expected_incoming': 49,
@@ -445,8 +480,10 @@ class EvolverNamespace():
             self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(MESSAGE), 'utf-8') + b'\r\n')
             lock.release()
 
-
-    def stop_all_pumps(self, ):
+    def stop_all_pumps(self):
+        '''
+        Stop all pumps
+        '''
         data = {'param': 'pump',
                 'value': ['0'] * 48,
                 'recurring': False,
@@ -455,10 +492,12 @@ class EvolverNamespace():
         lock.acquire()
         self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
         lock.release()
-        self.update_temperature([4095]*16)
 
 
     def _create_file(self, vial, param, directory=None, defaults=None):
+        '''
+        Create file for data saving, if needed!
+        '''
         if defaults is None:
             defaults = []
         if directory is None:
@@ -603,6 +642,10 @@ class EvolverNamespace():
         return start_time
 
     def check_for_calibrations(self):
+        '''
+        Check whether calibrations are available
+        Returns a boolean.
+        '''
         result = True
         if not os.path.exists(OD_CAL_PATH) or not os.path.exists(TEMP_CAL_PATH) or not os.path.exists(PUMP_CAL_PATH):
             # log and request again
@@ -611,7 +654,10 @@ class EvolverNamespace():
             result = False
         return result
 
-    def save_data(self, data, elapsed_time, vials, parameter):
+    def save_data(self, data: list, elapsed_time: float, vials: list, parameter: str):
+        '''
+        Save a variable into text file, each smart sleeve has its own file!
+        '''
         if len(data) == 0:
             return
         for x in vials:
@@ -630,15 +676,23 @@ class EvolverNamespace():
         with open(pickle_path, 'wb') as f:
             pickle.dump([start_time, OD_initial], f)
 
-    def get_flow_rate(self):
+
+    def get_flow_rate(self) -> dict:
+        '''
+        Get flow rate (pump calibration!)
+        '''
         pump_cal = None
         with open(PUMP_CAL_PATH) as f:
             pump_cal = json.load(f)
         return pump_cal['coefficients']
 
 
-    '''
+    """
     def calc_growth_rate(self, vial, gr_start, elapsed_time):
+        '''
+        Calculates growth rate in order to estimate TURBIDOSTAT flux!
+        Note: stats.linregress (lib scipy) IS NOT AVAILABLE IN BBB. It is needed to adapt to a numpy function!!!!
+        '''
         ODfile_name =  "vial{0}_OD.txt".format(vial)
         # Grab Data and make setpoint
         OD_path = os.path.join(EXP_DIR, 'OD', ODfile_name)
@@ -665,7 +719,7 @@ class EvolverNamespace():
         text_file = open(gr_path, "a+")
         text_file.write("{0},{1}\n".format(elapsed_time, slope))
         text_file.close()
-    '''
+    """
 
 
     def tail_to_np(self, path, window=10, BUFFER_SIZE=512):
@@ -717,9 +771,13 @@ class EvolverNamespace():
             # It is reading the header
             return np.asarray([])
 
-    def custom_functions(self, data, vials, elapsed_time):
-        # load user script from custom_script.py
+    def custom_functions(self, data: dict, vials: list, elapsed_time: float):
+        '''
+        Load user script from custom_script.py
+        Run scripts corresponding to requested operation using new received data
+        '''
         mode = self.experiment_params['function'] if self.experiment_params else OPERATION_MODE
+
         if mode == 'turbidostat':
             custom_script.turbidostat(self, data, vials, elapsed_time)
         elif mode == 'chemostat':
@@ -741,7 +799,12 @@ class EvolverNamespace():
                     mode)
 
     def stop_exp(self):
+        '''
+        Stop an experiment means stopping all pumps :D
+        '''
         self.stop_all_pumps()
+
+
 
 def setup_logging(filename, quiet, verbose):
     if quiet:
@@ -781,50 +844,56 @@ def get_options():
                            help='Disable logging to file entirely')
     return parser.parse_args(), parser
 
+
+
+
 if __name__ == '__main__':
 
+    # Connects to local Redis database, which will be used to communicate with SocketIO application (graphical user interface)
     redis_client = redis.StrictRedis("127.0.0.1")
 
     options, parser = get_options()
 
 
-        #changes terminal tab title in OSX
-    print('\x1B]0;eVOLVER EXPERIMENT: PRESS Ctrl-C TO PAUSE\x07')
-
+    # Get params from JSON file
     experiment_params = None
     if os.path.exists(JSON_PARAMS_FILE):
         with open(JSON_PARAMS_FILE) as f:
             experiment_params = json.load(f)
+        
 
+        
 
-    # start by stopping any existing chemostat
-    EVOLVER_NS = EvolverNamespace()
+    # Creates eVOLVER object
+    EVOLVER_NS = EvolverDPU()
 
+    # Start by stopping any existing experiment
     EVOLVER_NS.stop_all_pumps()
 
+    # Config and start an experiment !
     EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS,
-                                                      experiment_params,
-                                                      options.log_name,
-                                                      options.quiet,
-                                                      options.verbose,
-                                                      options.always_yes
-                                                      )
+                                                        experiment_params,
+                                                        options.log_name,
+                                                        options.quiet,
+                                                        options.verbose,
+                                                        options.always_yes
+                                                        )
 
-    # Using a non-blocking stream reader to be able to listen
-    # for commands from the electron app. 
+    # Is experiment paused ?
     paused = False
 
-    # broadcast thread
+    # Creates a broadcast thread, which will receive new data from hardware from evolver-server
     bServer = Thread(target=broadcast)
     bServer.start()
 
+   
 
-    
+     
 
     while(True):
         try:
             while(True):
-                # wait until there is a command in the list
+                # wait until there is a command in the queue (Redis variable)
                 # command = {"payload": bytes, "reply": boolean}
                 command = redis_client.brpop("socketio")
                     
@@ -882,85 +951,3 @@ if __name__ == '__main__':
     # covers corner case where user presses Ctrl-C twice quickly
     EVOLVER_NS.connect()
     EVOLVER_NS.stop_exp()
-
-
-
-
-
-
-
-'''
-    # logging setup
-
-    reset_connection_timer = time.time()
-    while True:        
-        try:
-            # infinite loop
-
-            # check if a message has come in from the DPU
-            message = input("Type command (stop/pause/continue): ")
-            if 'stop' in message:
-                logger.info('Stop message received - halting all pumps');
-                EVOLVER_NS.stop_exp()
-                EVOLVER_NS.disconnect()
-            if 'pause' in message:
-                print('Pausing experiment', flush = True)
-                logger.info('Pausing experiment in dpu')
-                paused = True
-                EVOLVER_NS.stop_exp()
-                EVOLVER_NS.disconnect()
-                
-            if 'continue' in message:
-                print('Restarting experiment', flush = True)
-                logger.info('Restarting experiment')
-                paused = False
-                EVOLVER_NS.connect()
-
-            if not paused:
-                    time.sleep(0.1)
-                    if time.time() - reset_connection_timer > 3600 and not paused:
-                        # reset connection to avoid buildup of broadcast
-                        # messages (unlikely but could happen for very long
-                        # experiments with slow dpu code/computer)
-                        logger.info('resetting connection to eVOLVER to avoid '
-                                    'potential buildup of broadcast messages')
-                        EVOLVER_NS.disconnect()
-                        EVOLVER_NS.connect()
-                        reset_connection_timer = time.time()
-        except KeyboardInterrupt:
-            try:
-                print('Ctrl-C detected, pausing experiment')
-                logger.warning('interrupt received, pausing experiment')
-                EVOLVER_NS.stop_exp()
-                # stop receiving broadcasts
-                EVOLVER_NS.disconnect()
-                while True:
-                    key = input('Experiment paused. Press enter key to restart '
-                                ' or hit Ctrl-C again to terminate experiment')
-                    logger.warning('resuming experiment')
-                    # no need to have something like "restart_chemo" here
-                    # with the new server logic
-                    EVOLVER_NS.connect()
-                    break
-            except KeyboardInterrupt:
-                print('Second Ctrl-C detected, shutting down')
-                logger.warning('second interrupt received, terminating '
-                                'experiment')
-                EVOLVER_NS.stop_exp()
-                print('Experiment stopped, goodbye!')
-                logger.warning('experiment stopped, goodbye!')
-                break
-        except Exception as e:
-            logger.critical('exception %s stopped the experiment' % str(e))
-            print('error "%s" stopped the experiment' % str(e))
-            traceback.print_exc(file=sys.stdout)
-            EVOLVER_NS.stop_exp()
-            print('Experiment stopped, goodbye!')
-            logger.warning('experiment stopped, goodbye!')
-            break
-
-    # stop experiment one last time
-    # covers corner case where user presses Ctrl-C twice quickly
-    EVOLVER_NS.connect()
-    EVOLVER_NS.stop_exp()
-'''
