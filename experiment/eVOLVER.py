@@ -256,9 +256,11 @@ class EvolverDPU():
         Request calibrations to evolver-server
         '''
         logger.debug('requesting active calibrations')
+
         lock.acquire()
         self.s.send(functions['getactivecal']['id'].to_bytes(1,'big') + b'\r\n')
         time.sleep(1)
+
         for _ in range(3):
             ready = select.select([self.s], [], [], 2)
             if ready[0]:
@@ -266,6 +268,7 @@ class EvolverDPU():
                 break
             else:
                 time.sleep(1)
+
         lock.release()
         return info
 
@@ -275,16 +278,42 @@ class EvolverDPU():
         lock.acquire()
         self.s.send(functions["setrawcalibration"]["id"].to_bytes(1,'big')+ bytes(json.dumps(data), 'utf-8') + b'\r\n')
         time.sleep(1)
+
         for _ in range(3):
             ready = select.select([self.s], [], [], 2)
+            
             if ready[0]:
                 info = self.s.recv(30000)[:-2]
                 break
             else:
                 time.sleep(1)
         lock.release()
+
         return info
     
+
+    def getcalibrationnames(self):
+        logger.debug('getcalibrationnames')
+
+        lock.acquire()
+        self.s.send(functions["getcalibrationnames"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            print('A')
+            ready = select.select([self.s], [], [], 2)
+
+            if ready[0]:
+                print('B')
+                msg = self.s.recv(30000)[:-2]
+                print(msg)
+                info = json.loads(msg)
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+        print(info)
+        return info
 
 
     def transform_data(self, data, vials, od_cal, temp_cal):
@@ -862,8 +891,6 @@ if __name__ == '__main__':
             experiment_params = json.load(f)
         
 
-        
-
     # Creates eVOLVER object
     EVOLVER_NS = EvolverDPU()
 
@@ -896,21 +923,33 @@ if __name__ == '__main__':
                 # wait until there is a command in the queue (Redis variable)
                 # command = {"payload": bytes, "reply": boolean}
                 command = redis_client.brpop("socketio")
-                    
-                command = json.loads(command[1].decode('UTF-8', errors='ignore').lower())
-                print(command)
 
-                if command["command"] == "command":
+                command = json.loads(command[1].decode('UTF-8', errors='ignore').lower())
+                command = json.loads(command) # WHY?
+
+                if command["command"] == "initialize_exp":
+                    print('A')
+                    redis_client.lpush("socketio_ans", {"teste": ['executado']})
+                    #EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp()
+
+                elif command["command"] == "command":
                     lock.acquire()     
                     EVOLVER_NS.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(command["payload"]), 'utf-8') + b'\r\n')
                     lock.release()
+
                 elif command["command"] == "getactivecal":
                     activelcal = EVOLVER_NS.request_calibrations()
                     redis_client.lpush("socketio_ans", json.dumps(activelcal))
+
+                elif command["command"] == "getcalibrationnames":
+                    calnames = EVOLVER_NS.getcalibrationnames()
+                    print(calnames)
+                    #redis_client.lpush("socketio_ans", json.dumps(calnames))
                     
                 elif command["command"] == "setrawcalibration":
                     ans = EVOLVER_NS.setrawcalibration(command["payload"])
                     redis_client.lpush("socketio_ans", ans)
+
 
                 time.sleep(1)
 

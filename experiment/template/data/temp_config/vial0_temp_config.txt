@@ -1,2 +1,0 @@
-Experiment: data vial 0, Thu May  4 16:54:09 2023
-0,30
