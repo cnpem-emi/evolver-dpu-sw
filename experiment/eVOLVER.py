@@ -14,9 +14,8 @@ import socket
 import traceback
 import asyncio
 import redis
-from consts import functions
 from threading import Thread, Lock
-
+from consts import functions
 
 import custom_script
 from custom_script import EXP_NAME
@@ -29,9 +28,11 @@ VIALS = [x for x in range(16)]
 
 SAVE_PATH = os.path.dirname(os.path.realpath(__file__))
 EXP_DIR = os.path.join(SAVE_PATH, EXP_NAME)
+
 OD_CAL_PATH = os.path.join(SAVE_PATH, 'od_cal.json')
 TEMP_CAL_PATH = os.path.join(SAVE_PATH, 'temp_cal.json')
 PUMP_CAL_PATH = os.path.join(SAVE_PATH, 'pump_cal.json')
+
 JSON_PARAMS_FILE = os.path.join(SAVE_PATH, 'eVOLVER_parameters.json')
 CHANNEL_INDEX_PATH = os.path.join(SAVE_PATH, 'channel_index.json')
 
@@ -41,13 +42,13 @@ LINEAR = 'linear'
 THREE_DIMENSION = '3d'
 
 logger = logging.getLogger('eVOLVER')
-
 paused = False
 
 
 
 # ---- eVolver DPU entity, connects to server (hardware access) evolver-sw
 global EVOLVER_NS
+
 EVOLVER_NS = None
 EVOLVER_IP = '127.0.0.1'
 EVOLVER_PORT = 6001
@@ -55,6 +56,7 @@ EVOLVER_PORT = 6001
 global broadcastSocket
 global broadcastReady
 global lock
+
 broadcastSocket = None
 broadcastReady = False
 lock = Lock() # Lock is similar to mutex. Will only 'allow' one task to use same socket at a time
@@ -73,32 +75,7 @@ with open(CHANNEL_INDEX_PATH) as f:
     channelIdx = json.load(f)
 
 
-
-def broadcast():
-    '''
-    When receive new data from evolver-server:
-      - Update Redis key
-      - Call broadcast method for eVolver DPU, which will decide next experiment step
-    '''
-    global broadcastSocket
-    global broadcastReady
-    global redis_client
-    global lock
-    global EVOLVER_NS
-
-    while True:
-        while broadcastReady:
-            
-            ready = select.select([broadcastSocket], [], [], 2)
-            if ready[0]:
-                        data = broadcastSocket.recv(4096)
-                        data = json.loads(data)
-                        redis_client.set("broadcast", json.dumps(data))
-                        EVOLVER_NS.broadcast(data)
-        time.sleep(1)
-
-
-
+# EvolverDPU class is defined
 class EvolverDPU():
     global broadcastSocket
     global broadcastReady
@@ -112,6 +89,7 @@ class EvolverDPU():
     ip_address = None
     exp_dir = SAVE_PATH
 
+    ''' Inicializando DPU '''
     def __init__(self):
         self.connect()
 
@@ -139,13 +117,15 @@ class EvolverDPU():
         logger.info('disconnected to eVOLVER as client')
 
 
+    ''' Broadcast and broadcast-related '''
     def broadcast(self, data: dict):
         '''
-        This method should be called every time a new broadcast is received from evolver-server (from BBB, which communicates w/ hardware),
-        which indicates that new values are available.
+        This method should be called every time a new broadcast is received from evolver-server 
+        (from BBB, which communicates w/ hardware), which indicates that new values are available.
 
         This method converts raw data into real values and ask for new step from custom functions.
         '''
+
         print('\nBroadcast received')
         elapsed_time = round((time.time() - self.start_time) / 3600, 4)
         print('Elapsed time: %.4f hours' % elapsed_time)
@@ -155,62 +135,59 @@ class EvolverDPU():
             print('Calibration files still missing, skipping custom '
                            'functions')
             return
+        
         with open(OD_CAL_PATH) as f:
             od_cal = json.load(f)
+
         with open(TEMP_CAL_PATH) as f:
             temp_cal = json.load(f)
 
-
         # Apply calibrations and update temperatures if needed
         data = self.transform_data(data, VIALS, od_cal, temp_cal)
-
-
 
         # Should we "blank" the OD?
         if self.use_blank and self.OD_initial is None:
             logger.info('setting initial OD reading')
             self.OD_initial = data['transformed']['od']
+
         elif self.OD_initial is None:
             self.OD_initial = np.zeros(len(VIALS))
-        data['transformed']['od'] = (data['transformed']['od'] -
-                                        self.OD_initial)
 
-
-        # Show data in screen
+        data['transformed']['od'] = (data['transformed']['od'] - self.OD_initial)
         print("OD: ", data["transformed"]["od"][:8])
         print("Temp: ", data["transformed"]["temp"][:8])
+
         if data is None:
             logger.error('could not tranform raw data, skipping user-'
                          'defined functions')
             return
 
-
         # Save data into .csv files
         try:
             # Transformed values, true values
-            self.save_data(data['transformed']['od'], elapsed_time,
-                            VIALS, 'OD')
-            self.save_data(data['transformed']['temp'], elapsed_time,
-                            VIALS, 'temp')
+            self.save_data(data['transformed']['od'], elapsed_time, VIALS, 'OD')
+            self.save_data(data['transformed']['temp'], elapsed_time, VIALS, 'temp')
             
             # Raw data
             raw_data = [0]*16
             for param in od_cal['params']:
+
                 # Order raw data before saving values
                 for ss in range(16):
                     raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
+
                 self.save_data(raw_data, elapsed_time, VIALS, param + '_raw')
 
             for param in temp_cal['params']:
                 # Order raw data before saving values
                 for ss in range(16):
                     raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
+                    
                 self.save_data(raw_data, elapsed_time, VIALS, param + '_raw')
 
         except OSError:
             logger.info("Broadcast received before experiment initialization - skipping custom function...")
             return
-
 
         # Run custom functions
         self.custom_functions(data, VIALS, elapsed_time)
@@ -222,99 +199,20 @@ class EvolverDPU():
         logging.shutdown()
         logging.getLogger('eVOLVER')
 
-
-
-
-    def activecalibrations(self, data: dict):
-        print('Calibrations received')
-        for calibration in data:
-            if calibration['calibrationType'] == 'od':
-                file_path = OD_CAL_PATH
-            elif calibration['calibrationType'] == 'temperature':
-                file_path = TEMP_CAL_PATH
-            elif calibration['calibrationType'] == 'pump':
-                file_path = PUMP_CAL_PATH
-            else:
-                continue
-            for fit in calibration['fits']:
-                if fit['active']:
-                    with open(file_path, 'w') as f:
-                        json.dump(fit, f)
-                    # Create raw data directories and files for params needed
-                    for param in fit['params']:
-                        if not os.path.isdir(os.path.join(EXP_DIR, param + '_raw')) and param != 'pump':
-                            os.makedirs(os.path.join(EXP_DIR, param + '_raw'))
-                            for x in range(len(fit['coefficients'])):
-                                exp_str = "Experiment: {0} vial {1}, {2}".format(EXP_NAME,
-                                        x,
-                                        time.strftime("%c"))
-                                self._create_file(x, param + '_raw', defaults=[exp_str])
-                    break
-
-    def request_calibrations(self) -> dict:
+    def check_for_calibrations(self):
         '''
-        Request calibrations to evolver-server
+        Check whether calibrations are available
+        Returns a boolean.
         '''
-        logger.debug('requesting active calibrations')
+        result = True
 
-        lock.acquire()
-        self.s.send(functions['getactivecal']['id'].to_bytes(1,'big') + b'\r\n')
-        time.sleep(1)
+        if not os.path.exists(OD_CAL_PATH) or not os.path.exists(TEMP_CAL_PATH) or not os.path.exists(PUMP_CAL_PATH):
+            # log and request again
+            logger.warning('Calibrations not received yet, requesting again')
+            self.request_calibrations()
+            result = False
 
-        for _ in range(3):
-            ready = select.select([self.s], [], [], 2)
-            if ready[0]:
-                info = json.loads(self.s.recv(30000)[:-2])
-                break
-            else:
-                time.sleep(1)
-
-        lock.release()
-        return info
-
-
-    def setrawcalibration(self, data):     
-        logger.debug('setrawcalibration')
-        lock.acquire()
-        self.s.send(functions["setrawcalibration"]["id"].to_bytes(1,'big')+ bytes(json.dumps(data), 'utf-8') + b'\r\n')
-        time.sleep(1)
-
-        for _ in range(3):
-            ready = select.select([self.s], [], [], 2)
-            
-            if ready[0]:
-                info = self.s.recv(30000)[:-2]
-                break
-            else:
-                time.sleep(1)
-        lock.release()
-
-        return info
-    
-
-    def getcalibrationnames(self):
-        logger.debug('getcalibrationnames')
-
-        lock.acquire()
-        self.s.send(functions["getcalibrationnames"]["id"].to_bytes(1,'big') + b'\r\n')
-        time.sleep(1)
-
-        for _ in range(3):
-            print('A')
-            ready = select.select([self.s], [], [], 2)
-
-            if ready[0]:
-                print('B')
-                msg = self.s.recv(30000)[:-2]
-                print(msg)
-                info = json.loads(msg)
-                break
-            else:
-                time.sleep(1)
-        lock.release()
-        print(info)
-        return info
-
+        return result
 
     def transform_data(self, data, vials, od_cal, temp_cal):
         od_data_2 = None
@@ -324,15 +222,17 @@ class EvolverDPU():
 
         od_data = data['data'].get(od_cal['params'][0], None)
         temp_data = data['data'].get(temp_cal['params'][0], None)
+
         temp_value = [0]*16
         od_value = [0]*16
-        set_temp_data = data['config'].get('temp', {}).get('value', None)
 
+        set_temp_data = data['config'].get('temp', {}).get('value', None)
 
         if od_data is None or temp_data is None or set_temp_data is None:
             print('Incomplete data recieved, Error with measurement')
             logger.error('Incomplete data received, error with measurements')
             return None
+        
         if 'NaN' in od_data or 'NaN' in temp_data or 'NaN' in set_temp_data:
             print('NaN recieved, Error with measurement')
             logger.error('NaN received, error with measurements')
@@ -341,6 +241,7 @@ class EvolverDPU():
         od_data = np.array([float(x) for x in od_data])
         if od_data_2:
             od_data_2 = np.array([float(x) for x in od_data_2])
+
         temp_data = np.array([float(x) for x in temp_data])
         set_temp_data = np.array([float(x) for x in set_temp_data])
 
@@ -348,13 +249,16 @@ class EvolverDPU():
         for x in vials:
             file_name =  "vial{0}_temp_config.txt".format(x)
             file_path = os.path.join(EXP_DIR, 'temp_config', file_name)
+
             temp_set_data = np.genfromtxt(file_path, delimiter=',')
             temp_set = temp_set_data[len(temp_set_data)-1][1]
             temps.append(temp_set)
+
             od_coefficients = od_cal['coefficients'][x]
             temp_coefficients = temp_cal['coefficients'][x]
             index_value = channelIdx[str(x)]["channel"]
 
+            # Try to apply calibration to OD
             try:
                 if od_cal['type'] == SIGMOID:
                     #convert raw photodiode data into ODdata using calibration curve
@@ -364,11 +268,14 @@ class EvolverDPU():
                                                     (float(od_data[index_value]) -
                                                     od_coefficients[0])-1)) /
                                                     od_coefficients[3]))
+                    
                     if not np.isfinite(od_data[x]):
                         od_value[x] = np.nan
                         logger.debug('OD from vial %d: %s' % (x, od_value[x]))
+
                     else:
                         logger.debug('OD from vial %d: %.3f' % (x, od_value[x]))
+
                 elif od_cal['type'] == THREE_DIMENSION:
                     od_value[x] = np.real(od_coefficients[0] +
                                         (od_coefficients[1]*od_data[index_value]) +
@@ -379,50 +286,59 @@ class EvolverDPU():
                 else:
                     logger.error('OD calibration not of supported type!')
                     od_value[x] = np.nan
+
             except ValueError:
                 print("OD Read Error")
                 logger.error('OD read error for vial %d, setting to NaN' % x)
                 od_value[x] = np.nan
+
+            # Try to apply calibration to temperature (read)
             try:
                 temp_value[x] = temp_data[channelIdx[str(x)]["channel"]]
                 temp_value[x] = (float(temp_value[x]) *
                                 temp_coefficients[0]) + temp_coefficients[1]
                 #print('temperature from vial %d: %.3f' % (x, temp_value[x]))
+
             except ValueError:
                 print("Temp Read Error")
                 logger.error('temperature read error for vial %d, setting to NaN'
                             % x)
                 temp_value[x]  = 'NaN'
+            
+            # Try to apply calibration to temperature (setpoint)
             try:
                 set_temp_data[x] = (float(set_temp_data[x]) *
                                     temp_coefficients[0]) + temp_coefficients[1]
                 logger.debug('set_temperature from vial %d: %.3f' % (x,
                                                                 set_temp_data[x]))
+                
             except ValueError:
                 print("Set Temp Read Error")
                 logger.error('set temperature read error for vial %d, setting to NaN'
                             % x)
                 set_temp_data[x]  = 'NaN'
 
-        temps = np.array(temps)
         # update temperatures only if difference with expected
         # value is above 0.2 degrees celsius
+        temps = np.array(temps)
         delta_t = np.abs(set_temp_data - temps).max()
 
         if delta_t < 0.2:
-            logger.info('updating temperatures (max. deltaT is %.2f)' %
-                        delta_t)
+            logger.info('updating temperatures (max. deltaT is %.2f)' % delta_t)
             coefficients = temp_cal['coefficients']
-            raw_temperatures = [0]*16
+            raw_temperatures = [0] * 16
+
             for x in vials:
                 index = channelIdx[str(x)]["channel"]
                 raw_temperatures[index] = str(int((temps[x] - temp_cal['coefficients'][x][1]) /
                                         temp_cal['coefficients'][x][0]))
             self.update_temperature(raw_temperatures)
+
         else:
             # config from server agrees with local config
             # report if actual temperature doesn't match
             delta_t = np.abs(temps - temp_data).max()
+
             if delta_t > 0.2:
                 logger.debug('actual temperature doesn\'t match configuration '
                             '(yet? max deltaT is %.2f)' % delta_t)
@@ -433,111 +349,65 @@ class EvolverDPU():
         data['transformed'] = {}
         data['transformed']['od'] = od_value
         data['transformed']['temp'] = temp_value
+        
         return data
 
-    def update_stir_rate(self, stir_rates: list, immediate = True):
+    def save_data(self, data: list, elapsed_time: float, vials: list, parameter: str):
         '''
-        Update stir values
+        Save a variable into text file, each smart sleeve has its own file!
         '''
-        data = {'param': 'stir', 'value': stir_rates,
-                'immediate': immediate, 'recurring': True}
-        logger.debug('stir rate command: %s' % data)
-        lock.acquire()
-        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
-        lock.release()
-
-    def update_temperature(self, temperatures: list, immediate = True):
-        '''
-        Update temperature values. Values in list should be raw values 0-4095
-        '''
-        data = {'param': 'temp', 'value': temperatures,
-                'immediate': immediate, 'recurring': True}
-        logger.debug('temperature command: %s' % data)
-        lock.acquire()
-        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
-        lock.release()
-
-    def fluid_command(self, MESSAGE: list):
-        '''
-        Update fluids values
-        '''
-        logger.debug('fluid command: %s' % MESSAGE)
-        command = {'param': 'pump', 'value': MESSAGE,
-                   'recurring': False ,'immediate': True}
-        lock.acquire()
-        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
-        lock.release()
-
-    def update_chemo(self, data: dict, vials: list, bolus_in_s: list, period_config: list, immediate = True):
-        '''
-        Update chemostato operations.
-        Usually asked to be run in custom_script.
-        Currently, only changes pumps !
-        '''
-        current_pump = data['config']['pump']['value']
-
-        MESSAGE = {'fields_expected_incoming': 49,
-                   'fields_expected_outgoing': 49,
-                   'recurring': True,
-                   'immediate': immediate,
-                   'value': ['--'] * 48,
-                   'param': 'pump'}
-
+        if len(data) == 0:
+            return
+        
         for x in vials:
-            pumpA_idx = channelIdx[str(x)]["A"]
-            pumpB_idx = channelIdx[str(x)]["B"]
-            pumpC_idx = channelIdx[str(x)]["C"]
+            file_name =  "vial{0}_{1}.txt".format(x, parameter)
+            file_path = os.path.join(EXP_DIR, parameter, file_name)
+            text_file = open(file_path, "a+")
+            text_file.write("{0},{1}\n".format(elapsed_time, data[x]))
+            text_file.close()
 
-            # stop pumps if period is zero
-            if period_config[x] == 0:
-                # influx
-                MESSAGE['value'][pumpA_idx] = '0|0'
-                MESSAGE['value'][pumpB_idx] = '0|0'
-                # efflux
-                MESSAGE['value'][pumpC_idx] = '0|0'
-
-            else:
-                # influx 1
-                MESSAGE['value'][pumpA_idx] = '%.2f|%.1f' % (bolus_in_s[x], period_config[x])
-                # influx 2
-                MESSAGE['value'][pumpB_idx] = '%.2f|%.1f' % (bolus_in_s[x], period_config[x])
-                # efflux
-                MESSAGE['value'][pumpC_idx] = '%.2f|%.1f' % (bolus_in_s[x] * 3,
-                                                        period_config[x])
-        if True: #MESSAGE['value'] != current_pump:
-            lock.acquire()
-            self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(MESSAGE), 'utf-8') + b'\r\n')
-            lock.release()
-
-    def stop_all_pumps(self):
+    def custom_functions(self, data: dict, vials: list, elapsed_time: float):
         '''
-        Stop all pumps
+        Load user script from custom_script.py
+        Run scripts corresponding to requested operation using new received data
         '''
-        data = {'param': 'pump',
-                'value': ['0'] * 48,
-                'recurring': False,
-                'immediate': True}
-        logger.info('stopping all pumps')
-        lock.acquire()
-        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
-        lock.release()
+        mode = self.experiment_params['function'] if self.experiment_params else OPERATION_MODE
+
+        if mode == 'turbidostat':
+            custom_script.turbidostat(self, data, vials, elapsed_time)
+
+        elif mode == 'chemostat':
+            custom_script.chemostat(self, data, vials, elapsed_time)
+
+        elif mode == 'growthcurve':
+            custom_script.growth_curve(self, data, vials, elapsed_time)
+
+        else:
+            # try to load the user function
+            # if failing report to user
+            logger.info('user-defined operation mode %s' % mode)
+
+            try:
+                func = getattr(custom_script, mode)
+                func(self, data, vials, elapsed_time)
+
+            except AttributeError:
+                logger.error('could not find function %s in custom_script.py' % mode)
+                print('Could not find function %s in custom_script.py '
+                    '- Skipping user defined functions'%
+                    mode)
+    
+    def save_variables(self, start_time, OD_initial):
+        # save variables needed for restarting experiment later
+        pickle_name = "{0}.pickle".format(EXP_NAME)
+        pickle_path = os.path.join(EXP_DIR, pickle_name)
+        logger.debug('saving all variables: %s' % pickle_path)
+
+        with open(pickle_path, 'wb') as f:
+            pickle.dump([start_time, OD_initial], f)
 
 
-    def _create_file(self, vial, param, directory=None, defaults=None):
-        '''
-        Create file for data saving, if needed!
-        '''
-        if defaults is None:
-            defaults = []
-        if directory is None:
-            directory = param
-        file_name =  "vial{0}_{1}.txt".format(vial, param)
-        file_path = os.path.join(EXP_DIR, directory, file_name)
-        text_file = open(file_path, "w")
-        for default in defaults:
-            text_file.write(default + '\n')
-        text_file.close()
-
+    ''' Experiment Related'''
     def initialize_exp(self, vials, experiment_params, log_name, quiet, verbose, always_yes = False):
         self.experiment_params = experiment_params
         logger.info('initializing experiment')
@@ -670,87 +540,6 @@ class EvolverDPU():
 
         return start_time
 
-    def check_for_calibrations(self):
-        '''
-        Check whether calibrations are available
-        Returns a boolean.
-        '''
-        result = True
-        if not os.path.exists(OD_CAL_PATH) or not os.path.exists(TEMP_CAL_PATH) or not os.path.exists(PUMP_CAL_PATH):
-            # log and request again
-            logger.warning('Calibrations not received yet, requesting again')
-            self.request_calibrations()
-            result = False
-        return result
-
-    def save_data(self, data: list, elapsed_time: float, vials: list, parameter: str):
-        '''
-        Save a variable into text file, each smart sleeve has its own file!
-        '''
-        if len(data) == 0:
-            return
-        for x in vials:
-            file_name =  "vial{0}_{1}.txt".format(x, parameter)
-            file_path = os.path.join(EXP_DIR, parameter, file_name)
-            text_file = open(file_path, "a+")
-            text_file.write("{0},{1}\n".format(elapsed_time, data[x]))
-            text_file.close()
-
-    def save_variables(self, start_time, OD_initial):
-        # save variables needed for restarting experiment later
-        save_path = os.path.dirname(os.path.realpath(__file__))
-        pickle_name = "{0}.pickle".format(EXP_NAME)
-        pickle_path = os.path.join(EXP_DIR, pickle_name)
-        logger.debug('saving all variables: %s' % pickle_path)
-        with open(pickle_path, 'wb') as f:
-            pickle.dump([start_time, OD_initial], f)
-
-
-    def get_flow_rate(self) -> dict:
-        '''
-        Get flow rate (pump calibration!)
-        '''
-        pump_cal = None
-        with open(PUMP_CAL_PATH) as f:
-            pump_cal = json.load(f)
-        return pump_cal['coefficients']
-
-
-    """
-    def calc_growth_rate(self, vial, gr_start, elapsed_time):
-        '''
-        Calculates growth rate in order to estimate TURBIDOSTAT flux!
-        Note: stats.linregress (lib scipy) IS NOT AVAILABLE IN BBB. It is needed to adapt to a numpy function!!!!
-        '''
-        ODfile_name =  "vial{0}_OD.txt".format(vial)
-        # Grab Data and make setpoint
-        OD_path = os.path.join(EXP_DIR, 'OD', ODfile_name)
-        OD_data = np.genfromtxt(OD_path, delimiter=',')
-        raw_time = OD_data[:, 0]
-        raw_OD = OD_data[:, 1]
-        raw_time = raw_time[np.isfinite(raw_OD)]
-        raw_OD = raw_OD[np.isfinite(raw_OD)]
-
-        # Trim points prior to gr_start
-        trim_time = raw_time[np.nonzero(np.where(raw_time > gr_start, 1, 0))]
-        trim_OD = raw_OD[np.nonzero(np.where(raw_time > gr_start, 1, 0))]
-
-        # Take natural log, calculate slope
-        log_OD = np.log(trim_OD)
-        slope, intercept, r_value, p_value, std_err = stats.linregress(
-            trim_time[np.isfinite(log_OD)],
-            log_OD[np.isfinite(log_OD)])
-        logger.debug('growth rate for vial %s: %.2f' % (vial, slope))
-
-        # Save slope to file
-        file_name =  "vial{0}_gr.txt".format(vial)
-        gr_path = os.path.join(EXP_DIR, 'growthrate', file_name)
-        text_file = open(gr_path, "a+")
-        text_file.write("{0},{1}\n".format(elapsed_time, slope))
-        text_file.close()
-    """
-
-
     def tail_to_np(self, path, window=10, BUFFER_SIZE=512):
         """
         Reads file from the end and returns a numpy array with the data of the last 'window' lines.
@@ -800,32 +589,245 @@ class EvolverDPU():
             # It is reading the header
             return np.asarray([])
 
-    def custom_functions(self, data: dict, vials: list, elapsed_time: float):
+    def update_chemo(self, data: dict, vials: list, bolus_in_s: list, period_config: list, immediate = True):
         '''
-        Load user script from custom_script.py
-        Run scripts corresponding to requested operation using new received data
+        Update chemostato operations.
+        Usually asked to be run in custom_script.
+        Currently, only changes pumps !
         '''
-        mode = self.experiment_params['function'] if self.experiment_params else OPERATION_MODE
+        current_pump = data['config']['pump']['value']
 
-        if mode == 'turbidostat':
-            custom_script.turbidostat(self, data, vials, elapsed_time)
-        elif mode == 'chemostat':
-            custom_script.chemostat(self, data, vials, elapsed_time)
-        elif mode == 'growthcurve':
-            custom_script.growth_curve(self, data, vials, elapsed_time)
-        else:
-            # try to load the user function
-            # if failing report to user
-            logger.info('user-defined operation mode %s' % mode)
-            try:
-                func = getattr(custom_script, mode)
-                func(self, data, vials, elapsed_time)
-            except AttributeError:
-                logger.error('could not find function %s in custom_script.py' %
-                            mode)
-                print('Could not find function %s in custom_script.py '
-                    '- Skipping user defined functions'%
-                    mode)
+        MESSAGE = {'fields_expected_incoming': 49,
+                   'fields_expected_outgoing': 49,
+                   'recurring': True,
+                   'immediate': immediate,
+                   'value': ['--'] * 48,
+                   'param': 'pump'}
+
+        for x in vials:
+            pumpA_idx = channelIdx[str(x)]["A"]
+            pumpB_idx = channelIdx[str(x)]["B"]
+            pumpC_idx = channelIdx[str(x)]["C"]
+
+            # stop pumps if period is zero
+            if period_config[x] == 0:
+                # influx
+                MESSAGE['value'][pumpA_idx] = '0|0'
+                MESSAGE['value'][pumpB_idx] = '0|0'
+                # efflux
+                MESSAGE['value'][pumpC_idx] = '0|0'
+
+            else:
+                # influx 1
+                MESSAGE['value'][pumpA_idx] = '%.2f|%.1f' % (bolus_in_s[x], period_config[x])
+                # influx 2
+                MESSAGE['value'][pumpB_idx] = '%.2f|%.1f' % (bolus_in_s[x], period_config[x])
+                # efflux
+                MESSAGE['value'][pumpC_idx] = '%.2f|%.1f' % (bolus_in_s[x] * 3, period_config[x])
+
+        if True: #MESSAGE['value'] != current_pump:
+            lock.acquire()
+            self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(MESSAGE), 'utf-8') + b'\r\n')
+            lock.release()
+
+    def get_flow_rate(self) -> dict:
+        '''
+        Get flow rate (pump calibration!)
+        '''
+        pump_cal = None
+        with open(PUMP_CAL_PATH) as f:
+            pump_cal = json.load(f)
+        return pump_cal['coefficients']
+    
+    """
+    def calc_growth_rate(self, vial, gr_start, elapsed_time):
+        '''
+        Calculates growth rate in order to estimate TURBIDOSTAT flux!
+        Note: stats.linregress (lib scipy) IS NOT AVAILABLE IN BBB. It is needed to adapt to a numpy function!!!!
+        '''
+        ODfile_name =  "vial{0}_OD.txt".format(vial)
+        # Grab Data and make setpoint
+        OD_path = os.path.join(EXP_DIR, 'OD', ODfile_name)
+        OD_data = np.genfromtxt(OD_path, delimiter=',')
+        raw_time = OD_data[:, 0]
+        raw_OD = OD_data[:, 1]
+        raw_time = raw_time[np.isfinite(raw_OD)]
+        raw_OD = raw_OD[np.isfinite(raw_OD)]
+
+        # Trim points prior to gr_start
+        trim_time = raw_time[np.nonzero(np.where(raw_time > gr_start, 1, 0))]
+        trim_OD = raw_OD[np.nonzero(np.where(raw_time > gr_start, 1, 0))]
+
+        # Take natural log, calculate slope
+        log_OD = np.log(trim_OD)
+        slope, intercept, r_value, p_value, std_err = stats.linregress(
+            trim_time[np.isfinite(log_OD)],
+            log_OD[np.isfinite(log_OD)])
+        logger.debug('growth rate for vial %s: %.2f' % (vial, slope))
+
+        # Save slope to file
+        file_name =  "vial{0}_gr.txt".format(vial)
+        gr_path = os.path.join(EXP_DIR, 'growthrate', file_name)
+        text_file = open(gr_path, "a+")
+        text_file.write("{0},{1}\n".format(elapsed_time, slope))
+        text_file.close()
+    """
+
+    def fluid_command(self, MESSAGE: list):
+        '''
+        Update fluids values
+        '''
+        logger.debug('fluid command: %s' % MESSAGE)
+        command = {'param': 'pump', 'value': MESSAGE,
+                   'recurring': False ,'immediate': True}
+        lock.acquire()
+        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        lock.release()
+
+
+    ''' Calibration-related '''
+    def activecalibrations(self, data: dict):
+        print('Calibrations received')
+        for calibration in data:
+            if calibration['calibrationType'] == 'od':
+                file_path = OD_CAL_PATH
+            elif calibration['calibrationType'] == 'temperature':
+                file_path = TEMP_CAL_PATH
+            elif calibration['calibrationType'] == 'pump':
+                file_path = PUMP_CAL_PATH
+            else:
+                continue
+            for fit in calibration['fits']:
+                if fit['active']:
+                    with open(file_path, 'w') as f:
+                        json.dump(fit, f)
+                    # Create raw data directories and files for params needed
+                    for param in fit['params']:
+                        if not os.path.isdir(os.path.join(EXP_DIR, param + '_raw')) and param != 'pump':
+                            os.makedirs(os.path.join(EXP_DIR, param + '_raw'))
+                            for x in range(len(fit['coefficients'])):
+                                exp_str = "Experiment: {0} vial {1}, {2}".format(EXP_NAME,
+                                        x,
+                                        time.strftime("%c"))
+                                self._create_file(x, param + '_raw', defaults=[exp_str])
+                    break
+
+    def request_calibrations(self) -> dict:
+        '''
+        Request calibrations to evolver-server
+        '''
+        logger.debug('requesting active calibrations')
+
+        lock.acquire()
+        self.s.send(functions['getactivecal']['id'].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = json.loads(self.s.recv(30000)[:-2])
+                break
+            else:
+                time.sleep(1)
+
+        lock.release()
+        return info
+
+    def setrawcalibration(self, data):     
+        logger.debug('setrawcalibration')
+        lock.acquire()
+        self.s.send(functions["setrawcalibration"]["id"].to_bytes(1,'big')+ bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+
+        return info
+    
+    def getcalibrationnames(self):
+        logger.debug('getcalibrationnames')
+
+        lock.acquire()
+        self.s.send(functions["getcalibrationnames"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            print('A')
+            ready = select.select([self.s], [], [], 2)
+
+            if ready[0]:
+                print('B')
+                msg = self.s.recv(30000)[:-2]
+                print(msg)
+                info = json.loads(msg)
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+        print(info)
+        return info
+    
+
+    def update_stir_rate(self, stir_rates: list, immediate = True):
+        '''
+        Update stir values
+        '''
+        data = {'param': 'stir', 'value': stir_rates,
+                'immediate': immediate, 'recurring': True}
+        logger.debug('stir rate command: %s' % data)
+        lock.acquire()
+        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        lock.release()
+
+    def update_temperature(self, temperatures: list, immediate = True):
+        '''
+        Update temperature values. Values in list should be raw values 0-4095
+        '''
+        data = {'param': 'temp', 'value': temperatures,
+                'immediate': immediate, 'recurring': True}
+        logger.debug('temperature command: %s' % data)
+        lock.acquire()
+        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        lock.release()
+    
+
+    def stop_all_pumps(self):
+        '''
+        Stop all pumps
+        '''
+        data = {'param': 'pump', 
+                'value': ['0'] * 48,
+                'recurring': False,
+                'immediate': True}
+        
+        logger.info('stopping all pumps')
+        lock.acquire()
+        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        lock.release()
+
+
+    def _create_file(self, vial, param, directory=None, defaults=None):
+        '''
+        Create file for data saving, if needed!
+        '''
+        if defaults is None:
+            defaults = []
+        if directory is None:
+            directory = param
+        file_name =  "vial{0}_{1}.txt".format(vial, param)
+        file_path = os.path.join(EXP_DIR, directory, file_name)
+        text_file = open(file_path, "w")
+        for default in defaults:
+            text_file.write(default + '\n')
+        text_file.close()
+
 
     def stop_exp(self):
         '''
@@ -833,6 +835,31 @@ class EvolverDPU():
         '''
         self.stop_all_pumps()
 
+
+
+# Auxiliary functions
+def broadcast():
+    '''
+    When receive new data from evolver-server:
+      - Update Redis key
+      - Call broadcast method for eVOLVER DPU, which will decide next experiment step
+    '''
+    global broadcastSocket
+    global broadcastReady
+    global redis_client
+    global lock
+    global EVOLVER_NS
+
+    while True:
+        while broadcastReady:
+            ready = select.select([broadcastSocket], [], [], 2)
+            
+            if ready[0]:
+                        data = broadcastSocket.recv(4096)
+                        data = json.loads(data)
+                        redis_client.set("broadcast", json.dumps(data))
+                        EVOLVER_NS.broadcast(data)
+        time.sleep(1)
 
 
 def setup_logging(filename, quiet, verbose):
@@ -849,6 +876,7 @@ def setup_logging(filename, quiet, verbose):
                             filename=filename,
                             level=level)
 
+
 def get_options():
     description = 'Run an eVOLVER experiment from the command line'
     parser = argparse.ArgumentParser(description=description)
@@ -859,23 +887,27 @@ def get_options():
                              '(i.e. continues from existing experiment, '
                              'overwrites existing data and blanks OD '
                              'measurements)')
+    
     parser.add_argument('-l', '--log-name',
                         default=os.path.join(EXP_DIR, 'evolver.log'),
                         help='Log file name directory (default: %(default)s)')
 
     log_nolog = parser.add_mutually_exclusive_group()
+
     log_nolog.add_argument('-v', '--verbose', action='count',
                            default=0,
                            help='Increase logging verbosity level to DEBUG '
                                 '(default: INFO)')
+    
     log_nolog.add_argument('-q', '--quiet', action='store_true',
                            default=False,
                            help='Disable logging to file entirely')
+    
     return parser.parse_args(), parser
 
 
 
-
+# MAIN
 if __name__ == '__main__':
 
     # Connects to local Redis database, which will be used to communicate with SocketIO application (graphical user interface)
@@ -913,9 +945,7 @@ if __name__ == '__main__':
     bServer = Thread(target=broadcast)
     bServer.start()
 
-   
-
-     
+    
 
     while(True):
         try:
@@ -928,7 +958,6 @@ if __name__ == '__main__':
                 command = json.loads(command) # WHY?
 
                 if command["command"] == "initialize_exp":
-                    print('A')
                     redis_client.lpush("socketio_ans", {"teste": ['executado']})
                     #EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp()
 
@@ -985,6 +1014,7 @@ if __name__ == '__main__':
             print('Experiment stopped, goodbye!')
             logger.warning('experiment stopped, goodbye!')
             break
+
 
     # stop experiment one last time
     # covers corner case where user presses Ctrl-C twice quickly

@@ -14,4 +14,5 @@ functions = {
 "run_commands":         {"id": 12}, 
 "get_num_commands":     {"id": 13}, 
 "sub_command":          {"id": 14}, 
+"initialize_exp":       {"id": 15}, 
 }

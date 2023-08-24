@@ -181,7 +181,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
         data = np.genfromtxt(ODset_path, delimiter=',')
         ODset = data[len(data)-1][1]
         ODsettime = data[len(data)-1][0]
-        num_curves=len(data)/2;
+        num_curves=len(data)/2
 
         file_name =  "vial{0}_OD.txt".format(x)
         OD_path = os.path.join(eVOLVER.exp_dir, EXP_NAME, 'OD', file_name)
