@@ -775,6 +775,7 @@ class EvolverDPU():
         return info
     
 
+
     def update_stir_rate(self, stir_rates: list, immediate = True):
         '''
         Update stir values
