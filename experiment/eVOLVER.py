@@ -922,7 +922,10 @@ if __name__ == '__main__':
                 command = redis_client.brpop("socketio")
 
                 command = json.loads(command[1].decode('UTF-8', errors='ignore').lower())
-                command = json.loads(command) # WHY?
+                
+                # When api redis writing was updated, this will no longer be necessary
+                if isinstance(command, str):
+                    command = json.loads(command)
 
                 if command["command"] == "initialize_exp":
                     print('A')
