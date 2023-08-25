@@ -1,0 +1,7 @@
+{
+    "python.linting.pylamaEnabled": true,
+    "python.linting.enabled": true,
+    "conventionalCommits.scopes": [
+        "git"
+    ]
+}

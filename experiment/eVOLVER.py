@@ -914,9 +914,6 @@ if __name__ == '__main__':
     bServer.start()
 
    
-
-     
-
     while(True):
         try:
             while(True):
