@@ -1011,16 +1011,15 @@ if __name__ == '__main__':
 
                 elif command["command"] == "getactivecal":
                     activelcal = EVOLVER_NS.request_calibrations()
-                    redis_client.lpush("socketio_ans", json.dumps(activelcal))
+                    redis_client.lpush("socketio_answer", json.dumps(activelcal))
 
                 elif command["command"] == "getcalibrationnames":
                     calnames = EVOLVER_NS.getcalibrationnames()
                     print(calnames)
-                    #redis_client.lpush("socketio_ans", json.dumps(calnames))
                     
                 elif command["command"] == "setrawcalibration":
                     ans = EVOLVER_NS.setrawcalibration(command["payload"])
-                    redis_client.lpush("socketio_ans", ans)
+                    redis_client.lpush("socketio_answer", ans)
 
 
                 time.sleep(1)
