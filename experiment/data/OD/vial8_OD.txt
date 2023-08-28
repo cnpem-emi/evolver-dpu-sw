@@ -1,2 +1,4 @@
-Experiment: data vial 8, Wed Aug 23 15:23:34 2023
+Experiment: data vial 8, Thu Aug 24 14:43:11 2023
 0.0003,nan
+0.0039,nan
+0.0074,nan

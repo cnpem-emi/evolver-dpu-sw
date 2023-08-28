@@ -18,8 +18,6 @@ from threading import Thread, Lock
 from consts import functions
 
 import custom_script
-from custom_script import EXP_NAME
-from custom_script import OPERATION_MODE
 from custom_script import STIR, TEMP
 
 # Should not be changed
@@ -27,7 +25,10 @@ VIALS = [x for x in range(16)]
 
 
 SAVE_PATH = os.path.dirname(os.path.realpath(__file__))
-EXP_DIR = os.path.join(SAVE_PATH, EXP_NAME)
+
+EXP_DIR = None   # os.path.join(SAVE_PATH, EXP_NAME)
+EXP_NAME = None
+OPERATION_MODE = None
 
 OD_CAL_PATH = os.path.join(SAVE_PATH, 'od_cal.json')
 TEMP_CAL_PATH = os.path.join(SAVE_PATH, 'temp_cal.json')
@@ -43,7 +44,6 @@ THREE_DIMENSION = '3d'
 
 logger = logging.getLogger('eVOLVER')
 paused = False
-
 
 
 # ---- eVolver DPU entity, connects to server (hardware access) evolver-sw
@@ -374,13 +374,13 @@ class EvolverDPU():
         mode = self.experiment_params['function'] if self.experiment_params else OPERATION_MODE
 
         if mode == 'turbidostat':
-            custom_script.turbidostat(self, data, vials, elapsed_time)
+            custom_script.turbidostat(self, data, vials, elapsed_time, EXP_NAME)
 
         elif mode == 'chemostat':
-            custom_script.chemostat(self, data, vials, elapsed_time)
+            custom_script.chemostat(self, data, vials, elapsed_time, EXP_NAME)
 
         elif mode == 'growthcurve':
-            custom_script.growth_curve(self, data, vials, elapsed_time)
+            custom_script.growth_curve(self, data, vials, elapsed_time, EXP_NAME)
 
         else:
             # try to load the user function
@@ -394,8 +394,7 @@ class EvolverDPU():
             except AttributeError:
                 logger.error('could not find function %s in custom_script.py' % mode)
                 print('Could not find function %s in custom_script.py '
-                    '- Skipping user defined functions'%
-                    mode)
+                    '- Skipping user defined functions' % mode)
     
     def save_variables(self, start_time, OD_initial):
         # save variables needed for restarting experiment later
@@ -409,13 +408,23 @@ class EvolverDPU():
 
     ''' Experiment Related'''
     def initialize_exp(self, vials, experiment_params, log_name, quiet, verbose, always_yes = False):
-        self.experiment_params = experiment_params
+        global EXP_NAME, EXP_DIR, OPERATION_MODE
         logger.info('initializing experiment')
 
+        if experiment_params == None:
+            logger.info('no configuration sent for experiment, fail to initialize')
+            return
+
+        self.experiment_params = experiment_params
+        EXP_NAME = experiment_params["name"]
+        EXP_DIR = os.path.join(SAVE_PATH, EXP_NAME)
+        OPERATION_MODE = experiment_params["function"]
+        
         if os.path.exists(EXP_DIR):
             setup_logging(log_name, quiet, verbose)
             logger.info('found an existing experiment')
             exp_continue = None
+
             if always_yes:
                 exp_continue = 'y'
             else:
@@ -427,16 +436,21 @@ class EvolverDPU():
         if exp_continue == 'n':
             if os.path.exists(EXP_DIR):
                 exp_overwrite = None
+                
                 if always_yes:
                     exp_overwrite = 'y'
+
                 else:
                     while exp_overwrite not in ['y', 'n']:
                         exp_overwrite = 'y' #input('Directory aleady exists. '
                                             #'Overwrite with new experiment? (y/n): ')
+
                 logger.info('data directory already exists')
+
                 if exp_overwrite == 'y':
                     logger.info('deleting existing data directory')
                     shutil.rmtree(EXP_DIR)
+
                 else:
                     print('Change experiment name in custom_script.py '
                         'and then restart...')
@@ -458,33 +472,41 @@ class EvolverDPU():
             os.makedirs(os.path.join(EXP_DIR, 'growthrate'))
             os.makedirs(os.path.join(EXP_DIR, 'chemo_config'))
             setup_logging(log_name, quiet, verbose)
+
             for x in vials:
                 exp_str = "Experiment: {0} vial {1}, {2}".format(EXP_NAME,
                                                                  x,
                                                            time.strftime("%c"))
+
                 # make OD file
                 self._create_file(x, 'OD', defaults=[exp_str])
                 self._create_file(x, 'od_135_raw')
+
                 # make temperature data file
                 self._create_file(x, 'temp')
                 self._create_file(x, 'temp_raw')
+
                 # make temperature configuration file
                 self._create_file(x, 'temp_config',
                                   defaults=[exp_str,
                                             "0,{0}".format(TEMP[x])])
+
                 # make pump log file
                 self._create_file(x, 'pump_log',
                                   defaults=[exp_str,
                                             "0,0"])
+
                 # make ODset file
                 self._create_file(x, 'ODset',
                                   defaults=[exp_str,
                                             "0,0"])
+
                 # make growth rate file
                 self._create_file(x, 'gr',
                                   defaults=[exp_str,
                                             "0,0"],
                                   directory='growthrate')
+
                 # make chemostat file
                 self._create_file(x, 'chemo_config',
                                   defaults=["0,0,0",
@@ -497,7 +519,9 @@ class EvolverDPU():
             if self.experiment_params:
                 stir_rate = list(map(lambda x: x['stir'], self.experiment_params['vial_configuration']))
                 temp_values = list(map(lambda x: x['temp'], self.experiment_params['vial_configuration']))
+            
             self.update_stir_rate(stir_rate)
+
             with open(TEMP_CAL_PATH) as f:
                 temp_cal = json.load(f)
                 temp_coefficients = temp_cal['coefficients']
@@ -539,6 +563,24 @@ class EvolverDPU():
                     backup_filename)
 
         return start_time
+
+    def _create_file(self, vial, param, directory=None, defaults=None):
+        '''
+        Create file for data saving, if needed!
+        '''
+        if defaults is None:
+            defaults = []
+
+        if directory is None:
+            directory = param
+
+        file_name =  "vial{0}_{1}.txt".format(vial, param)
+        file_path = os.path.join(EXP_DIR, directory, file_name)
+        text_file = open(file_path, "w")
+        
+        for default in defaults:
+            text_file.write(default + '\n')
+        text_file.close()
 
     def tail_to_np(self, path, window=10, BUFFER_SIZE=512):
         """
@@ -585,6 +627,7 @@ class EvolverDPU():
         try:
             data = np.asarray(data, dtype=np.float64)
             return data
+        
         except ValueError:
             # It is reading the header
             return np.asarray([])
@@ -635,22 +678,26 @@ class EvolverDPU():
         Get flow rate (pump calibration!)
         '''
         pump_cal = None
+
         with open(PUMP_CAL_PATH) as f:
             pump_cal = json.load(f)
+
         return pump_cal['coefficients']
     
-    """
     def calc_growth_rate(self, vial, gr_start, elapsed_time):
         '''
         Calculates growth rate in order to estimate TURBIDOSTAT flux!
-        Note: stats.linregress (lib scipy) IS NOT AVAILABLE IN BBB. It is needed to adapt to a numpy function!!!!
+
         '''
         ODfile_name =  "vial{0}_OD.txt".format(vial)
+
         # Grab Data and make setpoint
         OD_path = os.path.join(EXP_DIR, 'OD', ODfile_name)
         OD_data = np.genfromtxt(OD_path, delimiter=',')
+
         raw_time = OD_data[:, 0]
         raw_OD = OD_data[:, 1]
+
         raw_time = raw_time[np.isfinite(raw_OD)]
         raw_OD = raw_OD[np.isfinite(raw_OD)]
 
@@ -660,19 +707,20 @@ class EvolverDPU():
 
         # Take natural log, calculate slope
         log_OD = np.log(trim_OD)
-        slope, intercept, r_value, p_value, std_err = stats.linregress(
-            trim_time[np.isfinite(log_OD)],
-            log_OD[np.isfinite(log_OD)])
+        trim_time[np.isfinite(log_OD)]
+
+        aux = np.vstack([trim_time, np.ones(len(trim_time))]).T
+        slope, intercept = np.linalg.lstsq(aux, log_OD[np.isfinite(log_OD)], rcond=None)[0]
         logger.debug('growth rate for vial %s: %.2f' % (vial, slope))
 
         # Save slope to file
         file_name =  "vial{0}_gr.txt".format(vial)
         gr_path = os.path.join(EXP_DIR, 'growthrate', file_name)
+
         text_file = open(gr_path, "a+")
         text_file.write("{0},{1}\n".format(elapsed_time, slope))
         text_file.close()
-    """
-
+    
     def fluid_command(self, MESSAGE: list):
         '''
         Update fluids values
@@ -681,7 +729,7 @@ class EvolverDPU():
         command = {'param': 'pump', 'value': MESSAGE,
                    'recurring': False ,'immediate': True}
         lock.acquire()
-        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(command), 'utf-8') + b'\r\n')
         lock.release()
 
 
@@ -759,13 +807,11 @@ class EvolverDPU():
         time.sleep(1)
 
         for _ in range(3):
-            print('A')
             ready = select.select([self.s], [], [], 2)
 
             if ready[0]:
-                print('B')
                 msg = self.s.recv(30000)[:-2]
-                print(msg)
+                # print(msg)
                 info = json.loads(msg)
                 break
             else:
@@ -774,7 +820,6 @@ class EvolverDPU():
         print(info)
         return info
     
-
     def update_stir_rate(self, stir_rates: list, immediate = True):
         '''
         Update stir values
@@ -797,7 +842,6 @@ class EvolverDPU():
         self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
         lock.release()
     
-
     def stop_all_pumps(self):
         '''
         Stop all pumps
@@ -812,30 +856,105 @@ class EvolverDPU():
         self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
         lock.release()
 
-
-    def _create_file(self, vial, param, directory=None, defaults=None):
-        '''
-        Create file for data saving, if needed!
-        '''
-        if defaults is None:
-            defaults = []
-        if directory is None:
-            directory = param
-        file_name =  "vial{0}_{1}.txt".format(vial, param)
-        file_path = os.path.join(EXP_DIR, directory, file_name)
-        text_file = open(file_path, "w")
-        for default in defaults:
-            text_file.write(default + '\n')
-        text_file.close()
-
-
     def stop_exp(self):
         '''
         Stop an experiment means stopping all pumps :D
         '''
         self.stop_all_pumps()
 
+    ''' Need to test'''
 
+    def getfitnames(self): # x -> list
+        logger.debug('getfitnames')
+
+        lock.acquire()
+        self.s.send(functions["getfitnames"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+
+            if ready[0]:
+                msg = self.s.recv(30000)[:-2]
+                info = json.loads(msg)
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+        print(info)
+        return info
+
+    def getcalibration(self, data):    # data -> dict 
+        logger.debug('getcalibration')
+        lock.acquire()
+        self.s.send(functions["getcalibration"]["id"].to_bytes(1,'big')+ bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+        print(info)
+        return info
+
+    def getdevicename(self): # x -> dict
+        logger.debug('getdevicename')
+        lock.acquire()
+        self.s.send(functions["getdevicename"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+        print(info)
+        return info
+
+    def getlastcommands(self): # x -> dict
+        logger.debug('getlastcommands')
+        lock.acquire()
+        self.s.send(functions["getlastcommands"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+        print(info)
+        return info
+
+    def get_num_commands(self): # x -> int
+        logger.debug('get_num_commands')
+        lock.acquire()
+        self.s.send(functions["get_num_commands"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+        print(info)
+        return info 
 
 # Auxiliary functions
 def broadcast():
@@ -877,7 +996,7 @@ def setup_logging(filename, quiet, verbose):
                             level=level)
 
 
-def get_options():
+def get_options(exp_dir):
     description = 'Run an eVOLVER experiment from the command line'
     parser = argparse.ArgumentParser(description=description)
 
@@ -889,7 +1008,7 @@ def get_options():
                              'measurements)')
     
     parser.add_argument('-l', '--log-name',
-                        default=os.path.join(EXP_DIR, 'evolver.log'),
+                        default=os.path.join(exp_dir, 'evolver.log'),
                         help='Log file name directory (default: %(default)s)')
 
     log_nolog = parser.add_mutually_exclusive_group()
@@ -909,28 +1028,27 @@ def get_options():
 
 # MAIN
 if __name__ == '__main__':
-
     # Connects to local Redis database, which will be used to communicate with SocketIO application (graphical user interface)
     redis_client = redis.StrictRedis("127.0.0.1")
 
-    options, parser = get_options()
-
-
+    # Creates eVOLVER object
+    EVOLVER_NS = EvolverDPU()
+    # Start by stopping any existing experiment
+    EVOLVER_NS.stop_all_pumps()
+    
     # Get params from JSON file
     experiment_params = None
+
     if os.path.exists(JSON_PARAMS_FILE):
         with open(JSON_PARAMS_FILE) as f:
             experiment_params = json.load(f)
-        
 
-    # Creates eVOLVER object
-    EVOLVER_NS = EvolverDPU()
 
-    # Start by stopping any existing experiment
-    EVOLVER_NS.stop_all_pumps()
-
-    # Config and start an experiment !
-    EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS,
+    if experiment_params is not None:
+        # Config and start an experiment from terminal!
+        options, parser = get_options(os.path.join(SAVE_PATH, experiment_params["name"]))
+   
+        EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS,
                                                         experiment_params,
                                                         options.log_name,
                                                         options.quiet,
@@ -944,7 +1062,6 @@ if __name__ == '__main__':
     # Creates a broadcast thread, which will receive new data from hardware from evolver-server
     bServer = Thread(target=broadcast)
     bServer.start()
-
     
 
     while(True):
@@ -953,31 +1070,59 @@ if __name__ == '__main__':
                 # wait until there is a command in the queue (Redis variable)
                 # command = {"payload": bytes, "reply": boolean}
                 command = redis_client.brpop("socketio")
-
+                print(command)
                 command = json.loads(command[1].decode('UTF-8', errors='ignore').lower())
-                command = json.loads(command) # WHY?
 
-                if command["command"] == "initialize_exp":
-                    redis_client.lpush("socketio_ans", {"teste": ['executado']})
-                    #EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp()
+                
+                
+                if isinstance(command, str):
+                    command = json.loads(command)
+                
 
+                if command["command"] == "expt_config":
+                    # Config and start an experiment GUI!
+                    EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS, command["payload"])
+                    
                 elif command["command"] == "command":
+                    # {'payload': {'param': 'stir', 'value': ['nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6'], 'immediate': True}, 
+                    # 'reply': True, 
+                    # 'command': 'command'}
                     lock.acquire()     
                     EVOLVER_NS.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(command["payload"]), 'utf-8') + b'\r\n')
                     lock.release()
 
                 elif command["command"] == "getactivecal":
                     activelcal = EVOLVER_NS.request_calibrations()
-                    redis_client.lpush("socketio_ans", json.dumps(activelcal))
+                    redis_client.lpush("socketio_answer", json.dumps(activelcal))
 
                 elif command["command"] == "getcalibrationnames":
                     calnames = EVOLVER_NS.getcalibrationnames()
-                    print(calnames)
-                    #redis_client.lpush("socketio_ans", json.dumps(calnames))
+                    redis_client.lpush("socketio_answer", json.dumps(calnames))
                     
                 elif command["command"] == "setrawcalibration":
                     ans = EVOLVER_NS.setrawcalibration(command["payload"])
-                    redis_client.lpush("socketio_ans", ans)
+                    redis_client.lpush("socketio_answer", ans)
+
+                elif command["command"] == "getfitnames":
+                    print("entrei no loop")
+                    fitname = EVOLVER_NS.getfitnames()
+                    redis_client.lpush("socketio_answer", json.dumps(fitname))
+
+                elif command["command"] == "getcalibration":
+                    calib = EVOLVER_NS.getcalibration(command["payload"])
+                    redis_client.lpush("socketio_answer", json.dumps(calib))
+
+                elif command["command"] == "getdevicename":
+                    devicename = EVOLVER_NS.getdevicename()
+                    redis_client.lpush("socketio_answer", json.dumps(devicename))
+
+                elif command["command"] == "getlastcommands":
+                    lastcommands = EVOLVER_NS.getlastcommands()
+                    redis_client.lpush("socketio_answer", json.dumps(lastcommands))
+
+                elif command["command"] == "get_num_commands":
+                    num = EVOLVER_NS.get_num_commands()
+                    redis_client.lpush("socketio_answer", json.dumps(num))
 
 
                 time.sleep(1)
