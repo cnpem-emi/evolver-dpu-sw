@@ -817,7 +817,7 @@ class EvolverDPU():
             else:
                 time.sleep(1)
         lock.release()
-        print(info)
+        # print(info)
         return info
     
     def update_stir_rate(self, stir_rates: list, immediate = True):
@@ -862,9 +862,7 @@ class EvolverDPU():
         '''
         self.stop_all_pumps()
 
-    ''' Need to test'''
-
-    def getfitnames(self): # x -> list
+    def get_fit_names(self): # x -> list
         logger.debug('getfitnames')
 
         lock.acquire()
@@ -881,62 +879,63 @@ class EvolverDPU():
             else:
                 time.sleep(1)
         lock.release()
-        print(info)
+        # print(info)
         return info
 
-    def getcalibration(self, data):    # data -> dict 
-        logger.debug('getcalibration')
-        lock.acquire()
-        self.s.send(functions["getcalibration"]["id"].to_bytes(1,'big')+ bytes(json.dumps(data), 'utf-8') + b'\r\n')
-        time.sleep(1)
+    ''' Need to test'''
+    # def getcalibration(self, data):    # data -> dict 
+    #     logger.debug('getcalibration')
+    #     lock.acquire()
+    #     self.s.send(functions["getcalibration"]["id"].to_bytes(1,'big')+ bytes(json.dumps(data), 'utf-8') + b'\r\n')
+    #     time.sleep(1)
 
-        for _ in range(3):
-            ready = select.select([self.s], [], [], 2)
+    #     for _ in range(3):
+    #         ready = select.select([self.s], [], [], 2)
             
-            if ready[0]:
-                info = self.s.recv(30000)[:-2]
-                break
-            else:
-                time.sleep(1)
-        lock.release()
-        print(info)
-        return info
+    #         if ready[0]:
+    #             info = self.s.recv(30000)[:-2]
+    #             break
+    #         else:
+    #             time.sleep(1)
+    #     lock.release()
+    #     print(info)
+    #     return info
 
-    def getdevicename(self): # x -> dict
-        logger.debug('getdevicename')
-        lock.acquire()
-        self.s.send(functions["getdevicename"]["id"].to_bytes(1,'big') + b'\r\n')
-        time.sleep(1)
+    # def getdevicename(self): # x -> dict
+    #     logger.debug('getdevicename')
+    #     lock.acquire()
+    #     self.s.send(functions["getdevicename"]["id"].to_bytes(1,'big') + b'\r\n')
+    #     time.sleep(1)
 
-        for _ in range(3):
-            ready = select.select([self.s], [], [], 2)
+    #     for _ in range(3):
+    #         ready = select.select([self.s], [], [], 2)
             
-            if ready[0]:
-                info = self.s.recv(30000)[:-2]
-                break
-            else:
-                time.sleep(1)
-        lock.release()
-        print(info)
-        return info
+    #         if ready[0]:
+    #             info = self.s.recv(30000)[:-2]
+    #             break
+    #         else:
+    #             time.sleep(1)
+    #     lock.release()
+    #     print(info)
+    #     return info
 
-    def getlastcommands(self): # x -> dict
-        logger.debug('getlastcommands')
-        lock.acquire()
-        self.s.send(functions["getlastcommands"]["id"].to_bytes(1,'big') + b'\r\n')
-        time.sleep(1)
+    # def getlastcommands(self): # x -> dict
+    #     logger.debug('getlastcommands')
+    #     lock.acquire()
+    #     self.s.send(functions["getlastcommands"]["id"].to_bytes(1,'big') + b'\r\n')
+    #     time.sleep(1)
 
-        for _ in range(3):
-            ready = select.select([self.s], [], [], 2)
+    #     for _ in range(3):
+    #         ready = select.select([self.s], [], [], 2)
             
-            if ready[0]:
-                info = self.s.recv(30000)[:-2]
-                break
-            else:
-                time.sleep(1)
-        lock.release()
-        print(info)
-        return info
+    #         if ready[0]:
+    #             info = self.s.recv(30000)[:-2]
+    #             break
+    #         else:
+    #             time.sleep(1)
+    #     lock.release()
+    #     print(info)
+    #     return info
 
     def get_num_commands(self): # x -> int
         logger.debug('get_num_commands')
@@ -1105,24 +1104,25 @@ if __name__ == '__main__':
 
                 elif command["command"] == "getfitnames":
                     print("entrei no loop")
-                    fitname = EVOLVER_NS.getfitnames()
+                    fitname = EVOLVER_NS.get_fit_names()
                     redis_client.lpush("socketio_answer", json.dumps(fitname))
 
-                elif command["command"] == "getcalibration":
-                    calib = EVOLVER_NS.getcalibration(command["payload"])
-                    redis_client.lpush("socketio_answer", json.dumps(calib))
+                # elif command["command"] == "getcalibration":
+                #     calib = EVOLVER_NS.getcalibration(command["payload"])
+                #     redis_client.lpush("socketio_answer", json.dumps(calib))
 
-                elif command["command"] == "getdevicename":
-                    devicename = EVOLVER_NS.getdevicename()
-                    redis_client.lpush("socketio_answer", json.dumps(devicename))
+                # elif command["command"] == "getdevicename":
+                #     devicename = EVOLVER_NS.getdevicename()
+                #     redis_client.lpush("socketio_answer", json.dumps(devicename))
 
-                elif command["command"] == "getlastcommands":
-                    lastcommands = EVOLVER_NS.getlastcommands()
-                    redis_client.lpush("socketio_answer", json.dumps(lastcommands))
+                # elif command["command"] == "getlastcommands":
+                #     lastcommands = EVOLVER_NS.getlastcommands()
+                #     print(lastcommands)
+                #     redis_client.lpush("socketio_answer", json.dumps(lastcommands))
 
-                elif command["command"] == "get_num_commands":
-                    num = EVOLVER_NS.get_num_commands()
-                    redis_client.lpush("socketio_answer", json.dumps(num))
+                # elif command["command"] == "get_num_commands":
+                #     num = EVOLVER_NS.get_num_commands()
+                #     redis_client.lpush("socketio_answer", json.dumps(num))
 
 
                 time.sleep(1)
