@@ -12,7 +12,6 @@ import json
 import select
 import socket
 import traceback
-import asyncio
 import redis
 from consts import functions
 from threading import Thread, Lock
@@ -66,7 +65,7 @@ global sio
 
 # ----- Redis database for eVolver unit
 global redis_client
-redis_client = redis.StrictRedis("127.0.0.1")
+redis_client = redis.StrictRedis("127.0.0.1", port=6379, db=0)
 
 # ----- Smart sleeves indexes (hardware differs from sw index)
 global channelIdx
@@ -216,6 +215,49 @@ class EvolverDPU:
         logging.shutdown()
         logging.getLogger("eVOLVER")
 
+    # ----- [BEGGINING] Custom functions -----
+
+    def get_device_name(self) -> bytes | None:
+        """
+        Get device name.
+        """
+        lock.acquire()
+        # Check if to_bytes could be replaced by encode
+        data = functions["getdevicename"]["id"].to_bytes(1, "big") + b"\r\n"
+        self.s.send(data)
+        time.sleep(0.1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            print(ready)
+            if ready[0]:
+                # info = self.s.recv(30000)[:-2]
+                info = self.s.recv(30000)
+                lock.release()
+                print(info)
+                return info
+            time.sleep(1)
+
+        return None
+
+    def getfitnames(self) -> dict | None:
+        """
+        Get fit names.
+        """
+        lock.acquire()
+        self.s.send(functions["getfitnames"]["id"].to_bytes(1, "big") + b"\r\n")
+        time.sleep(0.1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = json.loads(self.s.recv(30000)[:-2])
+                lock.release()
+                return info
+            time.sleep(1)
+
+        return None
+
     def activecalibrations(self, data: dict):
         print("Calibrations received")
         for calibration in data:
@@ -247,7 +289,7 @@ class EvolverDPU:
 
     def request_calibrations(self) -> dict:
         """
-        Request calibrations to evolver-server
+        Request calibrations to evolver-server.
         """
         logger.debug("requesting active calibrations")
 
@@ -259,12 +301,13 @@ class EvolverDPU:
             ready = select.select([self.s], [], [], 2)
             if ready[0]:
                 info = json.loads(self.s.recv(30000)[:-2])
-                break
+                lock.release()
+                return info
             else:
                 time.sleep(1)
 
         lock.release()
-        return info
+        return None
 
     def setrawcalibration(self, data):
         logger.debug("setrawcalibration")
@@ -310,6 +353,8 @@ class EvolverDPU:
         lock.release()
         print(info)
         return info
+
+    # ----- [END] Custom functions -----
 
     def transform_data(self, data, vials, od_cal, temp_cal):
         od_data_2 = None
@@ -1028,6 +1073,7 @@ if __name__ == "__main__":
                 if isinstance(command, str):
                     command = json.loads(command)
 
+                print(command)
                 if command["command"] == "initialize_exp":
                     print("A")
                     redis_client.lpush("socketio_ans", {"teste": ["executado"]})
@@ -1046,6 +1092,11 @@ if __name__ == "__main__":
                     activelcal = EVOLVER_NS.request_calibrations()
                     redis_client.lpush("socketio_ans", json.dumps(activelcal))
 
+                elif command["command"] == "getfitnames":
+                    fitnames = EVOLVER_NS.getfitnames()
+                    print(fitnames)
+                    redis_client.lpush("socketio_ans", json.dumps(fitnames))
+
                 elif command["command"] == "getcalibrationnames":
                     calnames = EVOLVER_NS.getcalibrationnames()
                     print(calnames)
@@ -1055,7 +1106,11 @@ if __name__ == "__main__":
                     ans = EVOLVER_NS.setrawcalibration(command["payload"])
                     redis_client.lpush("socketio_ans", ans)
 
-                time.sleep(1)
+                elif command["command"] == "getdevicename":
+                    ans = EVOLVER_NS.get_device_name()
+                    print(ans)
+                else:
+                    print(command)
 
         except KeyboardInterrupt:
             try:
