@@ -288,6 +288,18 @@ class EvolverDPU:
 
         return None
 
+    def setactiveodcal(self, data: dict) -> None:
+        logger.debug("setactiveodcal")
+        lock.acquire()
+        self.s.send(
+            functions["setactiveodcal"]["id"].to_bytes(1, "big")
+            + bytes(json.dumps(data), "utf-8")
+            + b"\r\n"
+        )
+        time.sleep(1)
+        lock.release()
+
+        return None
 
     def get_device_name(self) -> bytes | None:
         """
@@ -1140,6 +1152,9 @@ if __name__ == "__main__":
 
                 elif command["command"] == "setfitcalibrations":
                     EVOLVER_NS.setfitcalibrations(command["payload"])
+
+                elif command["command"] == "setactiveodcal":
+                    EVOLVER_NS.setactiveodcal(command["payload"])
 
                 elif command["command"] == "setrawcalibration":
                     ans = EVOLVER_NS.setrawcalibration(command["payload"])
