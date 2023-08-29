@@ -217,6 +217,65 @@ class EvolverDPU:
 
     # ----- [BEGGINING] Custom functions -----
 
+    def getcalibrationnames(self):
+        logger.debug("getcalibrationnames")
+
+        lock.acquire()
+        self.s.send(functions["getcalibrationnames"]["id"].to_bytes(1, "big") + b"\r\n")
+        time.sleep(1)
+
+        for _ in range(3):
+            print("A")
+            ready = select.select([self.s], [], [], 2)
+
+            if ready[0]:
+                print("B")
+                msg = self.s.recv(30000)[:-2]
+                print(msg)
+                info = json.loads(msg)
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+        print(info)
+        return info
+
+    def getfitnames(self) -> bytes | None:
+        """
+        Get fit names.
+        """
+        lock.acquire()
+        self.s.send(functions["getfitnames"]["id"].to_bytes(1, "big") + b"\r\n")
+        time.sleep(0.1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = json.loads(self.s.recv(30000)[:-2])
+                lock.release()
+                return info
+            time.sleep(1)
+
+        return None
+
+    def getcalibration(self) -> bytes | None:
+        """
+        Get calibration.
+        """
+        lock.acquire()
+        self.s.send(functions["getcalibration"]["id"].to_bytes(1, "big") + b"\r\n")
+        time.sleep(0.1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = json.loads(self.s.recv(30000)[:-2])
+                lock.release()
+                return info
+            time.sleep(1)
+
+        return None
+
     def get_device_name(self) -> bytes | None:
         """
         Get device name.
@@ -235,24 +294,6 @@ class EvolverDPU:
                 info = self.s.recv(30000)
                 lock.release()
                 print(info)
-                return info
-            time.sleep(1)
-
-        return None
-
-    def getfitnames(self) -> dict | None:
-        """
-        Get fit names.
-        """
-        lock.acquire()
-        self.s.send(functions["getfitnames"]["id"].to_bytes(1, "big") + b"\r\n")
-        time.sleep(0.1)
-
-        for _ in range(3):
-            ready = select.select([self.s], [], [], 2)
-            if ready[0]:
-                info = json.loads(self.s.recv(30000)[:-2])
-                lock.release()
                 return info
             time.sleep(1)
 
@@ -329,29 +370,6 @@ class EvolverDPU:
                 time.sleep(1)
         lock.release()
 
-        return info
-
-    def getcalibrationnames(self):
-        logger.debug("getcalibrationnames")
-
-        lock.acquire()
-        self.s.send(functions["getcalibrationnames"]["id"].to_bytes(1, "big") + b"\r\n")
-        time.sleep(1)
-
-        for _ in range(3):
-            print("A")
-            ready = select.select([self.s], [], [], 2)
-
-            if ready[0]:
-                print("B")
-                msg = self.s.recv(30000)[:-2]
-                print(msg)
-                info = json.loads(msg)
-                break
-            else:
-                time.sleep(1)
-        lock.release()
-        print(info)
         return info
 
     # ----- [END] Custom functions -----
@@ -1100,7 +1118,12 @@ if __name__ == "__main__":
                 elif command["command"] == "getcalibrationnames":
                     calnames = EVOLVER_NS.getcalibrationnames()
                     print(calnames)
-                    # redis_client.lpush("socketio_ans", json.dumps(calnames))
+                    redis_client.lpush("socketio_ans", json.dumps(calnames))
+
+                elif command["command"] == "getcalibration":
+                    calibration = EVOLVER_NS.getcalibration()
+                    print(calibration)
+                    redis_client.lpush("socketio_ans", json.dumps(calibration))
 
                 elif command["command"] == "setrawcalibration":
                     ans = EVOLVER_NS.setrawcalibration(command["payload"])
@@ -1108,7 +1131,8 @@ if __name__ == "__main__":
 
                 elif command["command"] == "getdevicename":
                     ans = EVOLVER_NS.get_device_name()
-                    print(ans)
+                    redis_client.lpush("socketio_ans", ans)
+                    print("pushed")
                 else:
                     print(command)
 
