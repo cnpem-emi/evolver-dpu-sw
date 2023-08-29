@@ -18,14 +18,14 @@ from threading import Thread, Lock
 from consts import functions
 
 import custom_script
-from custom_script import STIR, TEMP
+from custom_script import STIR, TEMP, LED
 
 # Should not be changed
 VIALS = [x for x in range(16)]
 
 
-SAVE_PATH = os.path.dirname(os.path.realpath(__file__))
 
+SAVE_PATH = os.path.dirname(os.path.realpath(__file__))
 #EXP_DIR = None   # os.path.join(SAVE_PATH, EXP_NAME)
 #EXP_NAME = None
 #OPERATION_MODE = None
@@ -74,7 +74,6 @@ global channelIdx
 with open(CHANNEL_INDEX_PATH) as f:
     channelIdx = json.load(f)
 
-
 # EvolverDPU class is defined
 class EvolverDPU():
     global broadcastSocket
@@ -86,7 +85,7 @@ class EvolverDPU():
     exp_dir = None
     operation_mode = None
 
-    start_time = None
+    start_time = time.time()
     use_blank = False
     OD_initial = None
     experiment_params = None
@@ -136,8 +135,7 @@ class EvolverDPU():
 
         # Check if calibration files are available
         if not self.check_for_calibrations():
-            print('Calibration files still missing, skipping custom '
-                           'functions')
+            print('Calibration files still missing, skipping custom functions')
             return
         
         with open(OD_CAL_PATH) as f:
@@ -162,23 +160,22 @@ class EvolverDPU():
         print("Temp: ", data["transformed"]["temp"][:8])
 
         if data is None:
-            logger.error('could not tranform raw data, skipping user-'
-                         'defined functions')
+            logger.error('could not tranform raw data, skipping user-defined functions')
             return
-
+     
         # Save data into .csv files
         try:
             # Transformed values, true values
             self.save_data(data['transformed']['od'], elapsed_time, VIALS, 'OD')
             self.save_data(data['transformed']['temp'], elapsed_time, VIALS, 'temp')
-            
+                
             # Raw data
             raw_data = [0]*16
             for param in od_cal['params']:
 
                 # Order raw data before saving values
                 for ss in range(16):
-                    raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
+                     raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
 
                 self.save_data(raw_data, elapsed_time, VIALS, param + '_raw')
 
@@ -186,7 +183,7 @@ class EvolverDPU():
                 # Order raw data before saving values
                 for ss in range(16):
                     raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
-                    
+                        
                 self.save_data(raw_data, elapsed_time, VIALS, param + '_raw')
 
         except OSError:
@@ -249,15 +246,7 @@ class EvolverDPU():
         temp_data = np.array([float(x) for x in temp_data])
         set_temp_data = np.array([float(x) for x in set_temp_data])
 
-        temps = []
         for x in vials:
-            file_name =  "vial{0}_temp_config.txt".format(x)
-            file_path = os.path.join(EXP_DIR, 'temp_config', file_name)
-
-            temp_set_data = np.genfromtxt(file_path, delimiter=',')
-            temp_set = temp_set_data[len(temp_set_data)-1][1]
-            temps.append(temp_set)
-
             od_coefficients = od_cal['coefficients'][x]
             temp_coefficients = temp_cal['coefficients'][x]
             index_value = channelIdx[str(x)]["channel"]
@@ -308,46 +297,57 @@ class EvolverDPU():
                 logger.error('temperature read error for vial %d, setting to NaN'
                             % x)
                 temp_value[x]  = 'NaN'
-            
-            # Try to apply calibration to temperature (setpoint)
-            try:
-                set_temp_data[x] = (float(set_temp_data[x]) *
-                                    temp_coefficients[0]) + temp_coefficients[1]
-                logger.debug('set_temperature from vial %d: %.3f' % (x,
-                                                                set_temp_data[x]))
-                
-            except ValueError:
-                print("Set Temp Read Error")
-                logger.error('set temperature read error for vial %d, setting to NaN'
-                            % x)
-                set_temp_data[x]  = 'NaN'
-
-        # update temperatures only if difference with expected
-        # value is above 0.2 degrees celsius
-        temps = np.array(temps)
-        delta_t = np.abs(set_temp_data - temps).max()
-
-        if delta_t < 0.2:
-            logger.info('updating temperatures (max. deltaT is %.2f)' % delta_t)
-            coefficients = temp_cal['coefficients']
-            raw_temperatures = [0] * 16
+        
+        if self.exp_dir is not None:
+            temps = []
 
             for x in vials:
-                index = channelIdx[str(x)]["channel"]
-                raw_temperatures[index] = str(int((temps[x] - temp_cal['coefficients'][x][1]) /
-                                        temp_cal['coefficients'][x][0]))
-            self.update_temperature(raw_temperatures)
+                file_name =  "vial{0}_temp_config.txt".format(x)
+                file_path = os.path.join(self.exp_dir, 'temp_config', file_name)
 
-        else:
-            # config from server agrees with local config
-            # report if actual temperature doesn't match
-            delta_t = np.abs(temps - temp_data).max()
+                temp_set_data = np.genfromtxt(file_path, delimiter=',')
+                temp_set = temp_set_data[len(temp_set_data)-1][1]
+                temps.append(temp_set)
+            
+                # Try to apply calibration to temperature (setpoint)
+                try:
+                    set_temp_data[x] = (float(set_temp_data[x]) *
+                                        temp_coefficients[0]) + temp_coefficients[1]
+                    logger.debug('set_temperature from vial %d: %.3f' % (x,
+                                                                    set_temp_data[x]))
+                    
+                except ValueError:
+                    print("Set Temp Read Error")
+                    logger.error('set temperature read error for vial %d, setting to NaN'
+                                % x)
+                    set_temp_data[x]  = 'NaN'
 
-            if delta_t > 0.2:
-                logger.debug('actual temperature doesn\'t match configuration '
-                            '(yet? max deltaT is %.2f)' % delta_t)
-                logger.debug('temperature config: %s' % temps)
-                logger.debug('actual temperatures: %s' % temp_data)
+            # update temperatures only if difference with expected
+            # value is above 0.2 degrees celsius
+            temps = np.array(temps)
+            delta_t = np.abs(set_temp_data - temps).max()
+
+            if delta_t < 0.2:
+                logger.info('updating temperatures (max. deltaT is %.2f)' % delta_t)
+                coefficients = temp_cal['coefficients']
+                raw_temperatures = [0] * 16
+
+                for x in vials:
+                    index = channelIdx[str(x)]["channel"]
+                    raw_temperatures[index] = str(int((temps[x] - temp_cal['coefficients'][x][1]) /
+                                            temp_cal['coefficients'][x][0]))
+                self.update_temperature(raw_temperatures)
+
+            else:
+                # config from server agrees with local config
+                # report if actual temperature doesn't match
+                delta_t = np.abs(temps - temp_data).max()
+
+                if delta_t > 0.2:
+                    logger.debug('actual temperature doesn\'t match configuration '
+                                '(yet? max deltaT is %.2f)' % delta_t)
+                    logger.debug('temperature config: %s' % temps)
+                    logger.debug('actual temperatures: %s' % temp_data)
 
         # add a new field in the data dictionary
         data['transformed'] = {}
@@ -365,7 +365,7 @@ class EvolverDPU():
         
         for x in vials:
             file_name =  "vial{0}_{1}.txt".format(x, parameter)
-            file_path = os.path.join(EXP_DIR, parameter, file_name)
+            file_path = os.path.join(self.exp_dir, parameter, file_name)
             text_file = open(file_path, "a+")
             text_file.write("{0},{1}\n".format(elapsed_time, data[x]))
             text_file.close()
@@ -375,16 +375,16 @@ class EvolverDPU():
         Load user script from custom_script.py
         Run scripts corresponding to requested operation using new received data
         '''
-        mode = self.experiment_params['function'] if self.experiment_params else OPERATION_MODE
+        mode = self.experiment_params['function'] if self.experiment_params else self.operation_mode
 
         if mode == 'turbidostat':
-            custom_script.turbidostat(self, data, vials, elapsed_time, EXP_NAME)
+            custom_script.turbidostat(self, data, vials, elapsed_time, self.exp_name)
 
         elif mode == 'chemostat':
-            custom_script.chemostat(self, data, vials, elapsed_time, EXP_NAME)
+            custom_script.chemostat(self, data, vials, elapsed_time, self.exp_name)
 
         elif mode == 'growthcurve':
-            custom_script.growth_curve(self, data, vials, elapsed_time, EXP_NAME)
+            custom_script.growth_curve(self, data, vials, elapsed_time, self.exp_name)
 
         else:
             # try to load the user function
@@ -403,8 +403,8 @@ class EvolverDPU():
     
     def save_variables(self, start_time, OD_initial):
         # save variables needed for restarting experiment later
-        pickle_name = "{0}.pickle".format(EXP_NAME)
-        pickle_path = os.path.join(EXP_DIR, pickle_name)
+        pickle_name = "{0}.pickle".format(self.exp_name)
+        pickle_path = os.path.join(self.exp_dir, pickle_name)
         logger.debug('saving all variables: %s' % pickle_path)
 
         with open(pickle_path, 'wb') as f:
@@ -456,8 +456,7 @@ class EvolverDPU():
                     shutil.rmtree(self.exp_dir)
 
                 else:
-                    print('Change experiment name in custom_script.py '
-                        'and then restart...')
+                    print('Change experiment name in custom_script.py and then restart...')
                     logger.warning('not deleting existing data directory, exiting')
                     sys.exit(1)
 
@@ -678,8 +677,8 @@ class EvolverDPU():
         with open(PUMP_CAL_PATH) as f:
             raw_pump_cal = json.load(f)
 
-        for ss in range(16):
-            pump_cal[ss] = raw_pump_cal.get("coefficients", [])[channelIdx[str(ss)]["channel"]]
+        #for ss in range(16):
+        #    pump_cal[ss] = raw_pump_cal.get("coefficients", [])[channelIdx[str(ss)]["channel"]]
         #return pump_cal
 
         return raw_pump_cal["coefficients"]
@@ -787,10 +786,10 @@ class EvolverDPU():
                         json.dump(fit, f)
                     # Create raw data directories and files for params needed
                     for param in fit['params']:
-                        if not os.path.isdir(os.path.join(EXP_DIR, param + '_raw')) and param != 'pump':
-                            os.makedirs(os.path.join(EXP_DIR, param + '_raw'))
+                        if not os.path.isdir(os.path.join(self.exp_dir, param + '_raw')) and param != 'pump':
+                            os.makedirs(os.path.join(self.exp_dir, param + '_raw'))
                             for x in range(len(fit['coefficients'])):
-                                exp_str = "Experiment: {0} vial {1}, {2}".format(EXP_NAME,
+                                exp_str = "Experiment: {0} vial {1}, {2}".format(self.exp_name,
                                         x,
                                         time.strftime("%c"))
                                 self._create_file(x, param + '_raw', defaults=[exp_str])
@@ -899,7 +898,9 @@ def broadcast():
                         data = broadcastSocket.recv(4096)
                         data = json.loads(data)
                         redis_client.set("broadcast", json.dumps(data))
-                        EVOLVER_NS.broadcast(data)
+
+                        if EVOLVER_NS.exp_dir is not None:
+                            EVOLVER_NS.broadcast(data)
         time.sleep(1)
 
 
@@ -947,14 +948,26 @@ def get_options(exp_dir):
     return parser.parse_args(), parser
 
 
+def vial2channel(data:list):
+    indexes = [channelIdx[str(i)]["channel"] for i in VIALS]
+    channel = [data[i] for i in indexes]
+    return channel
+
+
+def channel2vial(data:list):
+    vial = [data[channelIdx[str(i)]["channel"]] for i in VIALS]
+    return vial
+
 
 # MAIN
 if __name__ == '__main__':
     # Connects to local Redis database, which will be used to communicate with SocketIO application (graphical user interface)
     redis_client = redis.StrictRedis("127.0.0.1")
 
-    # Creates eVOLVER object
+    # Creates eVOLVER object and turns on leds
     EVOLVER_NS = EvolverDPU()
+    EVOLVER_NS.update_led(LED)
+
     # Start by stopping any existing experiment
     EVOLVER_NS.stop_all_pumps()
     
@@ -999,7 +1012,11 @@ if __name__ == '__main__':
 
                 if command["command"] == "expt_config":
                     # Config and start an experiment GUI!
-                    EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS, command["payload"])
+                    EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS, 
+                                                                      command["payload"], 
+                                                                      EVOLVER_NS.exp_dir,
+                                                                      0,
+                                                                      False)
                     
                 elif command["command"] == "command":
                     # {'payload': {'param': 'stir', 'value': ['nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6'], 'immediate': True}, 

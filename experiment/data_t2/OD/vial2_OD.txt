@@ -1,0 +1,18 @@
+Experiment: data_t2 vial 2, Tue Aug 29 14:23:24 2023
+0.0041,nan
+0.0098,nan
+0.0155,nan
+0.0212,nan
+0.0269,nan
+0.0327,nan
+0.0384,nan
+0.0441,nan
+0.0498,nan
+0.0555,nan
+0.0612,nan
+0.0669,nan
+0.0726,nan
+0.0783,nan
+0.084,nan
+0.0897,nan
+0.0955,nan

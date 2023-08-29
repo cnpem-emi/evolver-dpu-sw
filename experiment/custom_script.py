@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 ##### Identify pump calibration files, define initial values for temperature, stirring, volume, power settings
 
-OD_LED = [2048] * 16 # 0 a 4095
-TEMP = [27] * 16   # degrees C, makes 16-value list
+LED = [2048] * 16 # 0 a 4095
+TEMP = [25] * 16   # degrees C, makes 16-value list
 STIR = [30] * 16   # 0 a 100%
 
 VOLUME =  45 # mL - Total vial volume
@@ -30,7 +30,7 @@ VOLUME =  45 # mL - Total vial volume
 
 
 
-def chemostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
+def chemostat(eVOLVER, input_data, vials, elapsed_time):
     
     ##### USER DEFINED VARIABLES #####
     start_OD = [0] * 16 # ~OD600, set to 0 to start chemostate dilutions at any positive OD
@@ -46,7 +46,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
 
 
     stir = STIR 
-    OD_data = input_data['transformed']['od']
+    #OD_data = input_data['transformed']['od']
 
     if eVOLVER.experiment_params is not None:
         print(eVOLVER.experiment_params)
@@ -73,7 +73,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
 
         #initialize OD and find OD path
         file_name =  "vial{0}_OD.txt".format(x)
-        OD_path = os.path.join(eVOLVER.exp_dir, exp_name, 'OD', file_name)
+        OD_path = os.path.join(eVOLVER.exp_dir, 'OD', file_name)
         data = eVOLVER.tail_to_np(OD_path, OD_values_to_average)
         average_OD = 0
         #enough_ODdata = (len(data) > 7) #logical, checks to see if enough data points (couple minutes) for sliding window
@@ -86,8 +86,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
 
             # set chemostat config path and pull current state from file
             file_name =  "vial{0}_chemo_config.txt".format(x)
-            chemoconfig_path = os.path.join(eVOLVER.exp_dir, exp_name,
-                                            'chemo_config', file_name)
+            chemoconfig_path = os.path.join(eVOLVER.exp_dir, 'chemo_config', file_name)
             chemo_config = np.genfromtxt(chemoconfig_path, delimiter=',')
             last_chemoset = chemo_config[len(chemo_config)-1][0] #should t=0 initially, changes each time a new command is written to file
             last_chemophase = chemo_config[len(chemo_config)-1][1] #should be zero initially, changes each time a new command is written to file
@@ -127,7 +126,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
 
 
 
-def turbidostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
+def turbidostat(eVOLVER, input_data, vials, elapsed_time):
     '''
     A SER AVALIADO E MODIFICADO
     '''
@@ -170,7 +169,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
 
         # Begining of a growth curve (ODset)
         file_name =  "vial{0}_ODset.txt".format(x)
-        ODset_path = os.path.join(eVOLVER.exp_dir, exp_name, 'ODset', file_name)
+        ODset_path = os.path.join(eVOLVER.exp_dir, 'ODset', file_name)
         data = np.genfromtxt(ODset_path, delimiter=',')
 
         ODset = data[len(data)-1][1]
@@ -179,7 +178,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
 
         # Current OD measured (OD)
         file_name = "vial{0}_OD.txt".format(x)
-        OD_path = os.path.join(eVOLVER.exp_dir, exp_name, 'OD', file_name)
+        OD_path = os.path.join(eVOLVER.exp_dir, 'OD', file_name)
         
         data = eVOLVER.tail_to_np(OD_path, OD_values_to_average)
         average_OD = 0
@@ -220,7 +219,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
                 time_in = round(time_in, 2)
 
                 file_name =  "vial{0}_pump_log.txt".format(x)
-                file_path = os.path.join(eVOLVER.exp_dir, exp_name, 'pump_log', file_name)
+                file_path = os.path.join(eVOLVER.exp_dir, 'pump_log', file_name)
                 
                 data = np.genfromtxt(file_path, delimiter=',')
                 last_pump = data[len(data)-1][0]
@@ -233,7 +232,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
                     MESSAGE[x + 32] = str(time_in + time_out)
 
                     file_name =  "vial{0}_pump_log.txt".format(x)
-                    file_path = os.path.join(eVOLVER.exp_dir, exp_name, 'pump_log', file_name)
+                    file_path = os.path.join(eVOLVER.exp_dir, 'pump_log', file_name)
 
                     text_file = open(file_path, "a+")
                     text_file.write("{0},{1}\n".format(elapsed_time, time_in))
@@ -252,7 +251,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time, exp_name):
 
 
 
-def growth_curve(eVOLVER, input_data, vials, elapsed_time, exp_name):
+def growth_curve(eVOLVER, input_data, vials, elapsed_time):
     return
 
 
