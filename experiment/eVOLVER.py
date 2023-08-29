@@ -114,7 +114,7 @@ class EvolverDPU:
 
     def connect(self):
         """
-        Connect to evolver-server, to get/set hardware information
+        Connect to evolver-server, to get/set hardware information.
         """
         global broadcastSocket
         global broadcastReady
@@ -229,7 +229,6 @@ class EvolverDPU:
             ready = select.select([self.s], [], [], 2)
 
             if ready[0]:
-                print("B")
                 msg = self.s.recv(30000)[:-2]
                 print(msg)
                 info = json.loads(msg)
@@ -275,6 +274,20 @@ class EvolverDPU:
             time.sleep(1)
 
         return None
+
+    def setfitcalibrations(self, data: dict) -> None:
+        logger.debug("setfitcalibrations")
+        lock.acquire()
+        self.s.send(
+            functions["setfitcalibrations"]["id"].to_bytes(1, "big")
+            + bytes(json.dumps(data), "utf-8")
+            + b"\r\n"
+        )
+        time.sleep(1)
+        lock.release()
+
+        return None
+
 
     def get_device_name(self) -> bytes | None:
         """
@@ -1124,6 +1137,9 @@ if __name__ == "__main__":
                     calibration = EVOLVER_NS.getcalibration()
                     print(calibration)
                     redis_client.lpush("socketio_ans", json.dumps(calibration))
+
+                elif command["command"] == "setfitcalibrations":
+                    EVOLVER_NS.setfitcalibrations(command["payload"])
 
                 elif command["command"] == "setrawcalibration":
                     ans = EVOLVER_NS.setrawcalibration(command["payload"])
