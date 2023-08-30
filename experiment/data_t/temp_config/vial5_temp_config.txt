@@ -1,2 +1,0 @@
-Experiment: data_t vial 5, Tue Aug 29 14:21:18 2023
-0,25

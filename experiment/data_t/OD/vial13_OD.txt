@@ -1,4 +1,0 @@
-Experiment: data_t vial 13, Tue Aug 29 14:21:18 2023
-0.0049,nan
-0.0106,nan
-0.0163,nan

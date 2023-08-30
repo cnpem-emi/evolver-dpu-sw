@@ -23,8 +23,6 @@ from custom_script import STIR, TEMP, LED
 # Should not be changed
 VIALS = [x for x in range(16)]
 
-
-
 SAVE_PATH = os.path.dirname(os.path.realpath(__file__))
 #EXP_DIR = None   # os.path.join(SAVE_PATH, EXP_NAME)
 #EXP_NAME = None
@@ -81,6 +79,7 @@ class EvolverDPU():
     global channelIdx
     global lock
 
+    exp_status = False
     exp_name = None
     exp_dir = None
     operation_mode = None
@@ -156,11 +155,14 @@ class EvolverDPU():
             self.OD_initial = np.zeros(len(VIALS))
 
         data['transformed']['od'] = (data['transformed']['od'] - self.OD_initial)
-        print("OD: ", data["transformed"]["od"][:8])
-        print("Temp: ", data["transformed"]["temp"][:8])
+        print("OD: ", data["transformed"]["od"][channelIdx[str(0)]["channel"]],data["transformed"]["od"][channelIdx[str(1)]["channel"]],data["transformed"]["od"][channelIdx[str(2)]["channel"]],data["transformed"]["od"][channelIdx[str(3)]["channel"]],data["transformed"]["od"][channelIdx[str(4)]["channel"]],data["transformed"]["od"][channelIdx[str(5)]["channel"]],data["transformed"]["od"][channelIdx[str(6)]["channel"]],data["transformed"]["od"][channelIdx[str(7)]["channel"]])
+        print("Temp: ", data["transformed"]["temp"][channelIdx[str(0)]["channel"]], data["transformed"]["temp"][channelIdx[str(1)]["channel"]], data["transformed"]["temp"][channelIdx[str(2)]["channel"]],data["transformed"]["temp"][channelIdx[str(3)]["channel"]],data["transformed"]["temp"][channelIdx[str(4)]["channel"]],data["transformed"]["temp"][channelIdx[str(5)]["channel"]],data["transformed"]["temp"][channelIdx[str(6)]["channel"]],data["transformed"]["temp"][channelIdx[str(7)]["channel"]])
 
         if data is None:
             logger.error('could not tranform raw data, skipping user-defined functions')
+            return
+        
+        if self.exp_status is False:
             return
      
         # Save data into .csv files
@@ -378,13 +380,13 @@ class EvolverDPU():
         mode = self.experiment_params['function'] if self.experiment_params else self.operation_mode
 
         if mode == 'turbidostat':
-            custom_script.turbidostat(self, data, vials, elapsed_time, self.exp_name)
+            custom_script.turbidostat(self, data, vials, elapsed_time)
 
         elif mode == 'chemostat':
-            custom_script.chemostat(self, data, vials, elapsed_time, self.exp_name)
+            custom_script.chemostat(self, data, vials, elapsed_time)
 
         elif mode == 'growthcurve':
-            custom_script.growth_curve(self, data, vials, elapsed_time, self.exp_name)
+            custom_script.growth_curve(self, data, vials, elapsed_time)
 
         else:
             # try to load the user function
@@ -412,43 +414,54 @@ class EvolverDPU():
 
 
     ''' Experiment Related'''
-    def initialize_exp(self, vials, experiment_params, log_name, quiet, verbose, always_yes = False):
-        logger.info('initializing experiment')
+    def config_exp(self, vials, experiment_params, quiet, verbose, always_yes = False):
+        logger.info('initializing config')
+        #os.path.join(exp_dir, 'evolver.log')
 
         if experiment_params == None:
             logger.info('no configuration sent for experiment, fail to initialize')
             return
-
+        
         self.experiment_params = experiment_params
         self.exp_name = experiment_params["name"]
         self.exp_dir = os.path.join(SAVE_PATH, self.exp_name)
         self.operation_mode = experiment_params["function"]
-        
-        if os.path.exists(self.exp_dir):
-            setup_logging(log_name, quiet, verbose)
-            logger.info('found an existing experiment')
-            exp_continue = None
 
-            if always_yes:
-                exp_continue = 'y'
-            else:
-                while exp_continue not in ['y', 'n']:
-                    exp_continue = 'n' #input('Continue from existing experiment? (y/n): ')
+        if os.path.exists(self.exp_dir):
+            setup_logging(os.path.join(self.exp_dir, 'evolver.log'), quiet, verbose)
+            logger.info('found an existing experiment, overwriting')
+            exp_continue = 'y' if always_yes else 'n'
         else:
             exp_continue = 'n'
+        
+        if exp_continue == 'y':
+            # load existing experiment
+            '''pickle_name =  "{0}.pickle".format(self.exp_dir)
+            pickle_path = os.path.join(self.exp_dir, pickle_name)
+            logger.info('loading previous experiment data: %s' % pickle_path)
 
-        if exp_continue == 'n':
+            with open(pickle_path, 'rb') as f:
+                loaded_var  = pickle.load(f)
+
+            x = loaded_var
+            start_time = x[0]
+            self.OD_initial = x[1]'''
+
+            with open(os.path.join(self.exp_dir, "exp_config.json")) as file:
+                retireved_params = json.load(file)
+            
+            self.exp_name = retireved_params["exp_name"]
+            self.exp_dir = retireved_params["directory"]
+            self.operation_mode = retireved_params["operation_mode"]
+            self.use_blank = retireved_params["use_blank"]
+            self.OD_initial = retireved_params["OD_initial"]
+            self.experiment_params = retireved_params["experiment_params"]
+        
+        else:
             if os.path.exists(self.exp_dir):
-                exp_overwrite = None
-                
-                if always_yes:
-                    exp_overwrite = 'y'
-
-                else:
-                    while exp_overwrite not in ['y', 'n']:
-                        exp_overwrite = 'y' #input('Directory aleady exists. '
-                                            #'Overwrite with new experiment? (y/n): ')
-
+                shutil.rmtree(self.exp_dir)
+                '''
+                exp_overwrite = 'y' if always_yes else 'n'
                 logger.info('data directory already exists')
 
                 if exp_overwrite == 'y':
@@ -459,12 +472,25 @@ class EvolverDPU():
                     print('Change experiment name in custom_script.py and then restart...')
                     logger.warning('not deleting existing data directory, exiting')
                     sys.exit(1)
-
-            start_time = time.time()
-
-            self.request_calibrations()
+                '''
 
             logger.debug('creating data directories')
+            path_config = os.path.join(self.exp_dir, 'exp_config.json') 
+            os.makedirs(self.exp_dir)
+
+            if os.path.exists(path_config):
+                print('existe')
+
+            with open(os.path.join(self.exp_dir, 'exp_config.json') , "w") as file:
+                json.dump({
+                    "name": self.exp_name,
+                    "directory": self.exp_dir,
+                    "operation_mode": self.operation_mode,
+                    "use_blank": self.use_blank,
+                    "OD_initial": self.OD_initial,
+                    "experiment_params": self.experiment_params
+                }, file)
+                
             os.makedirs(os.path.join(self.exp_dir, 'OD'))
             os.makedirs(os.path.join(self.exp_dir, 'od_135_raw'))
             os.makedirs(os.path.join(self.exp_dir, 'ODset'))
@@ -476,7 +502,7 @@ class EvolverDPU():
 
             os.makedirs(os.path.join(self.exp_dir, 'pump_log'))
             os.makedirs(os.path.join(self.exp_dir, 'chemo_config'))
-            setup_logging(log_name, quiet, verbose)
+            setup_logging(os.path.join(self.exp_dir, 'evolver.log'), quiet, verbose)
 
             for x in vials:
                 exp_str = "Experiment: {0} vial {1}, {2}".format(self.exp_name, x, time.strftime("%c"))
@@ -504,60 +530,60 @@ class EvolverDPU():
                 # make chemostat file
                 self._create_file(x, 'chemo_config', defaults=["0,0,0", "0,0,0"], directory='chemo_config')
 
-            stir_rate = STIR
-            temp_values = TEMP
+        return True
 
-            if self.experiment_params:
-                stir_rate = list(map(lambda x: x['stir'], self.experiment_params['vial_configuration']))
-                temp_values = list(map(lambda x: x['temp'], self.experiment_params['vial_configuration']))
-            
-            self.update_stir_rate(stir_rate)
-
-            with open(TEMP_CAL_PATH) as f:
-                temp_cal = json.load(f)
-                temp_coefficients = temp_cal['coefficients']
-
-                raw_temperatures = [str(int((temp_values[x] - temp_coefficients[x][1]) / temp_coefficients[x][0])) for x in vials]
-                raw_temperatures = [0]*16
-
-                for x in vials:
-                    index = channelIdx[str(x)]["channel"]
-                    raw_temperatures[index] = str(int((temp_values[x] - temp_coefficients[x][1]) / temp_coefficients[x][0]))
-                
-                self.update_temperature(raw_temperatures)
-
-            if always_yes:
-                exp_blank = 'y'
-            else:
-                exp_blank = 'n' #input('Calibrate vials to blank? (y/n): ')
-
-            if exp_blank == 'y': # will do it with first broadcast
-                self.use_blank = True
-                logger.info('will use initial OD measurement as blank')
-            else:
-                self.use_blank = False
-                self.OD_initial = np.zeros(len(vials))
+    def initialize_exp(self, vials, exp_name, always_yes = False):
+        logger.info('initializing experiment')
+        
+        if os.path.exists(os.path.join(SAVE_PATH, exp_name)):
+            self.exp_dir = os.path.join(SAVE_PATH, exp_name)
 
         else:
-            # load existing experiment
-            pickle_name =  "{0}.pickle".format(self.exp_dir)
-            pickle_path = os.path.join(self.exp_dir, pickle_name)
-            logger.info('loading previous experiment data: %s' % pickle_path)
+            logger.info('no experiment configuration saved')
+            return
 
-            with open(pickle_path, 'rb') as f:
-                loaded_var  = pickle.load(f)
+        with open(os.path.join(self.exp_dir, "exp_config.json")) as file:
+            retireved_params = json.load(file)
+        
+        self.exp_name = retireved_params["name"]
+        self.operation_mode = retireved_params["operation_mode"]
+        self.use_blank = retireved_params["use_blank"]
+        self.OD_initial = retireved_params["OD_initial"]
+        self.experiment_params = retireved_params["experiment_params"]
+        
+        start_time = time.time()
+        self.request_calibrations()
+            
+        if self.experiment_params:
+            stir_rate = list(map(lambda x: x['stir'], self.experiment_params['vial_configuration']))
+            temp_values = list(map(lambda x: x['temp'], self.experiment_params['vial_configuration']))
 
-            x = loaded_var
-            start_time = x[0]
-            self.OD_initial = x[1]
+        with open(TEMP_CAL_PATH) as f:
+            temp_cal = json.load(f)
+            temp_coefficients = temp_cal['coefficients']
+
+        raw_temperatures = [str(int((temp_values[x] - temp_coefficients[x][1]) / temp_coefficients[x][0])) for x in vials]
+                
+        self.update_temperature(raw_temperatures)
+        self.update_stir_rate(stir_rate)
+
+        exp_blank = 'y' if always_yes else 'n'
+
+        if exp_blank == 'y': # will do it with first broadcast
+            self.use_blank = True
+            logger.info('will use initial OD measurement as blank')
+        else:
+            self.use_blank = False
+            self.OD_initial = np.zeros(len(vials))
 
         # copy current custom script to txt file
         backup_filename = '{0}_{1}.txt'.format(self.exp_name, time.strftime('%y%m%d_%H%M'))
         shutil.copy(os.path.join(SAVE_PATH, 'custom_script.py'), os.path.join(self.exp_dir, backup_filename))
         logger.info('saved a copy of current custom_script.py as %s' % backup_filename)
 
+        self.exp_status = True
         return start_time
-
+    
     def _create_file(self, vial, param, directory=None, defaults=None):
         '''
         Create file for data saving, if needed!
@@ -857,7 +883,6 @@ class EvolverDPU():
         print(info)
         return info
     
-    
     def stop_all_pumps(self):
         '''
         Stop all pumps
@@ -872,8 +897,11 @@ class EvolverDPU():
     def stop_exp(self):
         '''
         Stop an experiment means stopping all pumps :D
+        temperature set to "zero" and stir stopped
         '''
         self.stop_all_pumps()
+        self.update_temperature([4095]*16)
+        self.update_stir_rate([0]*16)
 
 
 
@@ -895,12 +923,11 @@ def broadcast():
             ready = select.select([broadcastSocket], [], [], 2)
             
             if ready[0]:
-                        data = broadcastSocket.recv(4096)
-                        data = json.loads(data)
-                        redis_client.set("broadcast", json.dumps(data))
+                data = broadcastSocket.recv(4096)
+                data = json.loads(data)
+                redis_client.set("broadcast", json.dumps(data))
 
-                        if EVOLVER_NS.exp_dir is not None:
-                            EVOLVER_NS.broadcast(data)
+                EVOLVER_NS.broadcast(data)
         time.sleep(1)
 
 
@@ -919,6 +946,7 @@ def setup_logging(filename, quiet, verbose):
                             level=level)
 
 
+'''
 def get_options(exp_dir):
     description = 'Run an eVOLVER experiment from the command line'
     parser = argparse.ArgumentParser(description=description)
@@ -946,7 +974,7 @@ def get_options(exp_dir):
                            help='Disable logging to file entirely')
     
     return parser.parse_args(), parser
-
+'''
 
 def vial2channel(data:list):
     indexes = [channelIdx[str(i)]["channel"] for i in VIALS]
@@ -964,6 +992,16 @@ if __name__ == '__main__':
     # Connects to local Redis database, which will be used to communicate with SocketIO application (graphical user interface)
     redis_client = redis.StrictRedis("127.0.0.1")
 
+    # Get params from JSON file
+    experiment_params = None
+    '''
+    if os.path.exists(JSON_PARAMS_FILE):
+        with open(JSON_PARAMS_FILE) as f:
+            experiment_params = json.load(f)
+
+    options, parser = get_options(os.path.join(SAVE_PATH, experiment_params["name"]))
+    '''
+
     # Creates eVOLVER object and turns on leds
     EVOLVER_NS = EvolverDPU()
     EVOLVER_NS.update_led(LED)
@@ -971,39 +1009,19 @@ if __name__ == '__main__':
     # Start by stopping any existing experiment
     EVOLVER_NS.stop_all_pumps()
     
-    # Get params from JSON file
-    experiment_params = None
-
-    if os.path.exists(JSON_PARAMS_FILE):
-        with open(JSON_PARAMS_FILE) as f:
-            experiment_params = json.load(f)
-
-    
-    if experiment_params is not None:
-        # Config and start an experiment from terminal!
-        options, parser = get_options(os.path.join(SAVE_PATH, experiment_params["name"]))
-   
-        EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS,
-                                                        experiment_params,
-                                                        options.log_name,
-                                                        options.quiet,
-                                                        options.verbose,
-                                                        options.always_yes
-                                                        )
-
     # Is experiment paused ?
     paused = False
 
     # Creates a broadcast thread, which will receive new data from hardware from evolver-server
     bServer = Thread(target=broadcast)
     bServer.start()
-    
+    print("DPU on!")
 
     while(True):
         try:
             while(True):
                 # wait until there is a command in the queue (Redis variable)
-                # command = {"payload": bytes, "reply": boolean}
+                # command = {"command": bytes, "payload": bytes, "reply": boolean}
                 command = redis_client.brpop("socketio")
                 command = json.loads(command[1].decode('UTF-8', errors='ignore').lower())
 
@@ -1011,13 +1029,25 @@ if __name__ == '__main__':
                     command = json.loads(command)
 
                 if command["command"] == "expt_config":
-                    # Config and start an experiment GUI!
-                    EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS, 
-                                                                      command["payload"], 
-                                                                      EVOLVER_NS.exp_dir,
-                                                                      0,
-                                                                      False)
-                    
+                    # Config experiment via GUI!
+                    # {"payload": {"name": "data_t","function": "turbidostat","ip": "10.0.6.34","vial_configuration": [{"vial":0,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":1,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":2,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":3,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":4,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":5,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":6,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":7,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":8,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":9,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":10,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":11,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":12,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":13,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":14,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":15,"temp":30,"stir":8,"upper":0.85,"lower":0.3}]}, 
+                    # "reply": True,
+                    # "command": "expt_config"}
+                    experiment_params = command["payload"]
+                    config = EVOLVER_NS.config_exp(VIALS, experiment_params, 0, False, False)
+
+                    if config:
+                        redis_client.lpush("socketio_answer", json.dumps({"expt_config_setted":None}))
+                
+                elif command["command"] == "expt_start":
+                    # Start an experiment via GUI!
+                    # {"payload": {"name": "data_t"},
+                    # "reply": True,
+                    # "command": "expt_start"}
+                    EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS, command["payload"]["name"], False)
+                    redis_client.lpush("socketio_answer", json.dumps({"expt_started":None}))
+
+
                 elif command["command"] == "command":
                     # {'payload': {'param': 'stir', 'value': ['nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6', 'nan', '6'], 'immediate': True}, 
                     # 'reply': True, 
@@ -1049,22 +1079,23 @@ if __name__ == '__main__':
                 EVOLVER_NS.stop_exp()
                 # stop receiving broadcasts
                 EVOLVER_NS.disconnect()
+
                 while True:
-                    key = input('Experiment paused. Press enter key to restart '
-                                ' or hit Ctrl-C again to terminate experiment')
+                    key = input('Experiment paused. Press enter key to restart or hit Ctrl-C again to terminate experiment')
                     logger.warning('resuming experiment')
                     # no need to have something like "restart_chemo" here
                     # with the new server logic
                     EVOLVER_NS.connect()
                     break
+
             except KeyboardInterrupt:
                 print('Second Ctrl-C detected, shutting down')
-                logger.warning('second interrupt received, terminating '
-                                'experiment')
+                logger.warning('second interrupt received, terminating experiment')
                 EVOLVER_NS.stop_exp()
                 print('Experiment stopped, goodbye!')
                 logger.warning('experiment stopped, goodbye!')
                 break
+
         except Exception as e:
             logger.critical('exception %s stopped the experiment' % str(e))
             print('error "%s" stopped the experiment' % str(e))
