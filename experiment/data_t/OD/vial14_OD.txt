@@ -1,3 +1,11 @@
-Experiment: data_t vial 14, Mon Aug 28 10:58:07 2023
-0.0158,nan
-0.0215,nan
+Experiment: data_t vial 14, Wed Aug 30 17:19:46 2023
+0.0025,nan
+0.006,nan
+0.0117,nan
+0.0174,nan
+0.0231,nan
+0.0288,nan
+0.0345,nan
+0.0402,nan
+0.0459,nan
+0.0516,nan
