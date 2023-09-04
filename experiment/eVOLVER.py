@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
 
+import argparse
+import json
+import logging
 import os
+import pickle
+import select
+import shutil
+import socket
 import sys
 import time
-import pickle
-import shutil
-import logging
-import argparse
-import numpy as np
-import json
-import select
-import socket
 import traceback
-import redis
-from consts import functions
-from threading import Thread, Lock
+from threading import Lock, Thread
 
+import numpy as np
+import redis
 
 import custom_script
-from custom_script import EXP_NAME
-from custom_script import OPERATION_MODE
-from custom_script import STIR, TEMP
+from consts import functions
+from custom_script import EXP_NAME, OPERATION_MODE, STIR, TEMP
+from utils import get_file_handler, get_logger
 
 # Should not be changed
 VIALS = [x for x in range(16)]
@@ -39,7 +38,7 @@ SIGMOID = "sigmoid"
 LINEAR = "linear"
 THREE_DIMENSION = "3d"
 
-logger = logging.getLogger("eVOLVER")
+logger = logging.getLogger(__name__)
 
 paused = False
 
@@ -75,7 +74,8 @@ with open(CHANNEL_INDEX_PATH) as f:
 
 def broadcast():
     """
-    When receive new data from evolver-server:
+    Wait for new data from evolver-server.
+    After eatch broadcast, this method will:
       - Update Redis key
       - Call broadcast method for eVolver DPU, which will decide next experiment step
     """
@@ -89,10 +89,13 @@ def broadcast():
         while broadcastReady:
             ready = select.select([broadcastSocket], [], [], 2)
             if ready[0]:
-                data = broadcastSocket.recv(4096)
-                data = json.loads(data)
-                redis_client.set("broadcast", json.dumps(data))
-                EVOLVER_NS.broadcast(data)
+                try:
+                    data = broadcastSocket.recv(30000)
+                    data = json.loads(data)
+                    redis_client.set("broadcast", json.dumps(data))
+                    EVOLVER_NS.broadcast(data)
+                except Exception as e:
+                    print("Error while receiving broadcast data: {}".format(e))
         time.sleep(1)
 
 
@@ -143,8 +146,9 @@ class EvolverDPU:
         This method converts raw data into real values and ask for new step from custom functions.
         """
         print("\nBroadcast received")
+        logger.debug("broadcast received: %s" % data)
         elapsed_time = round((time.time() - self.start_time) / 3600, 4)
-        print("Elapsed time: %.4f hours" % elapsed_time)
+        # print("Elapsed time: %.4f hours" % elapsed_time)
 
         # Check if calibration files are available
         if not self.check_for_calibrations():
@@ -217,26 +221,51 @@ class EvolverDPU:
 
     # ----- [BEGGINING] Custom functions -----
 
+    def appendcal(self, data: dict):
+        """
+        Append calibration.
+        """
+        logger.debug("appendcal")
+        lock.acquire()
+        self.s.send(
+            functions["appendcal"]["id"].to_bytes(1, "big")
+            + bytes(json.dumps(data), "utf-8")
+            + b"\r\n"
+        )
+        time.sleep(0.1)
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+                lock.release()
+                return info
+            else:
+                time.sleep(1)
+        lock.release()
+
+        return None
+
     def getcalibrationnames(self):
         logger.debug("getcalibrationnames")
 
         lock.acquire()
         self.s.send(functions["getcalibrationnames"]["id"].to_bytes(1, "big") + b"\r\n")
-        time.sleep(1)
+        time.sleep(0.5)
 
         for _ in range(3):
-            print("A")
+            print("Wainting calibration names from server")
             ready = select.select([self.s], [], [], 2)
 
             if ready[0]:
                 msg = self.s.recv(30000)[:-2]
-                print(msg)
+                print("Calibration names from server:", msg)
                 info = json.loads(msg)
-                break
+                lock.release()
+                return info
             else:
-                time.sleep(1)
+                time.sleep(0.5)
         lock.release()
-        print(info)
+        print("failed to get calibration names from server")
         return info
 
     def getfitnames(self) -> bytes | None:
@@ -257,18 +286,24 @@ class EvolverDPU:
 
         return None
 
-    def getcalibration(self) -> bytes | None:
+    def getcalibration(self, data: dict) -> bytes | None:
         """
         Get calibration.
         """
         lock.acquire()
-        self.s.send(functions["getcalibration"]["id"].to_bytes(1, "big") + b"\r\n")
-        time.sleep(0.1)
+        self.s.send(
+            functions["getcalibration"]["id"].to_bytes(1, "big")
+            + bytes(json.dumps(data), "utf-8")
+            + b"\r\n"
+        )
+        time.sleep(0.5)
 
         for _ in range(3):
             ready = select.select([self.s], [], [], 2)
             if ready[0]:
-                info = json.loads(self.s.recv(30000)[:-2])
+                response = self.s.recv(30000)[:-2]
+                print("Response: ", response)
+                info = json.loads(response)
                 lock.release()
                 return info
             time.sleep(1)
@@ -283,7 +318,7 @@ class EvolverDPU:
             + bytes(json.dumps(data), "utf-8")
             + b"\r\n"
         )
-        time.sleep(1)
+        time.sleep(0.1)
         lock.release()
 
         return None
@@ -412,10 +447,12 @@ class EvolverDPU:
         set_temp_data = data["config"].get("temp", {}).get("value", None)
 
         if od_data is None or temp_data is None or set_temp_data is None:
+            logger.warning("Incomplete data received, error with measurements")
             print("Incomplete data recieved, Error with measurement")
             logger.error("Incomplete data received, error with measurements")
             return None
         if "NaN" in od_data or "NaN" in temp_data or "NaN" in set_temp_data:
+            logger.warning("NaN received, error with measurements")
             print("NaN recieved, Error with measurement")
             logger.error("NaN received, error with measurements")
             return None
@@ -691,7 +728,7 @@ class EvolverDPU:
         logger.info("initializing experiment")
 
         if os.path.exists(EXP_DIR):
-            setup_logging(log_name, quiet, verbose)
+            # setup_logging(log_name, quiet, verbose)
             logger.info("found an existing experiment")
             exp_continue = None
             if always_yes:
@@ -739,7 +776,7 @@ class EvolverDPU:
             os.makedirs(os.path.join(EXP_DIR, "ODset"))
             os.makedirs(os.path.join(EXP_DIR, "growthrate"))
             os.makedirs(os.path.join(EXP_DIR, "chemo_config"))
-            setup_logging(log_name, quiet, verbose)
+            # setup_logging(log_name, quiet, verbose)
             for x in vials:
                 exp_str = "Experiment: {0} vial {1}, {2}".format(
                     EXP_NAME, x, time.strftime("%c")
@@ -1066,9 +1103,12 @@ def get_options():
     return parser.parse_args(), parser
 
 
+logger.handlers.clear()
+fh = get_file_handler("dpu.log")
+root = get_logger(fh)
 if __name__ == "__main__":
-    # Connects to local Redis database, which will be used to communicate with SocketIO application (graphical user interface)
     redis_client = redis.StrictRedis("127.0.0.1")
+    redis_client.delete("socketio_answer")
 
     options, parser = get_options()
 
@@ -1119,7 +1159,7 @@ if __name__ == "__main__":
                 print(command)
                 if command["command"] == "initialize_exp":
                     print("A")
-                    redis_client.lpush("socketio_ans", {"teste": ["executado"]})
+                    redis_client.lpush("socketio_answer", {"teste": ["executado"]})
                     # EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp()
 
                 elif command["command"] == "command":
@@ -1133,36 +1173,43 @@ if __name__ == "__main__":
 
                 elif command["command"] == "getactivecal":
                     activelcal = EVOLVER_NS.request_calibrations()
-                    redis_client.lpush("socketio_ans", json.dumps(activelcal))
+                    redis_client.lpush("socketio_answer", json.dumps(activelcal))
+
+                elif command["command"] == "appendcal":
+                    response = EVOLVER_NS.appendcal(command["payload"])
+                    redis_client.lpush("socketio_answer", json.dumps(response))
 
                 elif command["command"] == "getfitnames":
                     fitnames = EVOLVER_NS.getfitnames()
                     print(fitnames)
-                    redis_client.lpush("socketio_ans", json.dumps(fitnames))
+                    redis_client.lpush("socketio_answer", json.dumps(fitnames))
 
                 elif command["command"] == "getcalibrationnames":
                     calnames = EVOLVER_NS.getcalibrationnames()
                     print(calnames)
-                    redis_client.lpush("socketio_ans", json.dumps(calnames))
+                    redis_client.lpush("socketio_answer", json.dumps(calnames))
 
                 elif command["command"] == "getcalibration":
-                    calibration = EVOLVER_NS.getcalibration()
+                    calibration = EVOLVER_NS.getcalibration(command["payload"])
                     print(calibration)
-                    redis_client.lpush("socketio_ans", json.dumps(calibration))
+                    redis_client.lpush("socketio_answer", json.dumps(calibration))
 
                 elif command["command"] == "setfitcalibrations":
                     EVOLVER_NS.setfitcalibrations(command["payload"])
 
+                # TODO: define default answer to all commands
                 elif command["command"] == "setactiveodcal":
                     EVOLVER_NS.setactiveodcal(command["payload"])
+                    redis_client.lpush("socketio_answer", "ok")
 
                 elif command["command"] == "setrawcalibration":
                     ans = EVOLVER_NS.setrawcalibration(command["payload"])
-                    redis_client.lpush("socketio_ans", ans)
+                    print(ans)
+                    redis_client.lpush("socketio_answer", ans)
 
                 elif command["command"] == "getdevicename":
                     ans = EVOLVER_NS.get_device_name()
-                    redis_client.lpush("socketio_ans", ans)
+                    redis_client.lpush("socketio_answer", ans)
                     print("pushed")
                 else:
                     print(command)
