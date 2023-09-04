@@ -76,7 +76,7 @@ with open(CHANNEL_INDEX_PATH) as f:
 class EvolverDPU():
     global broadcastSocket
     global broadcastReady
-    global channelIdx
+    global channelIdx                                                                                                     
     global lock
 
     exp_status = False
@@ -155,8 +155,8 @@ class EvolverDPU():
             self.OD_initial = np.zeros(len(VIALS))
 
         data['transformed']['od'] = (data['transformed']['od'] - self.OD_initial)
-        print("OD: ", data["transformed"]["od"][channelIdx[str(0)]["channel"]],data["transformed"]["od"][channelIdx[str(1)]["channel"]],data["transformed"]["od"][channelIdx[str(2)]["channel"]],data["transformed"]["od"][channelIdx[str(3)]["channel"]],data["transformed"]["od"][channelIdx[str(4)]["channel"]],data["transformed"]["od"][channelIdx[str(5)]["channel"]],data["transformed"]["od"][channelIdx[str(6)]["channel"]],data["transformed"]["od"][channelIdx[str(7)]["channel"]])
-        print("Temp: ", data["transformed"]["temp"][channelIdx[str(0)]["channel"]], data["transformed"]["temp"][channelIdx[str(1)]["channel"]], data["transformed"]["temp"][channelIdx[str(2)]["channel"]],data["transformed"]["temp"][channelIdx[str(3)]["channel"]],data["transformed"]["temp"][channelIdx[str(4)]["channel"]],data["transformed"]["temp"][channelIdx[str(5)]["channel"]],data["transformed"]["temp"][channelIdx[str(6)]["channel"]],data["transformed"]["temp"][channelIdx[str(7)]["channel"]])
+        print("OD: ", data["transformed"]["od"][:8])
+        print("Temp: ", data["transformed"]["temp"][:8])
 
         if data is None:
             logger.error('could not tranform raw data, skipping user-defined functions')
@@ -173,18 +173,20 @@ class EvolverDPU():
                 
             # Raw data
             raw_data = [0]*16
-            for param in od_cal['params']:
 
+            for param in od_cal['params']:
+                raw_data = data['data'].get(param, [])
                 # Order raw data before saving values
-                for ss in range(16):
-                     raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
+                #for ss in range(16):
+                #     raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
 
                 self.save_data(raw_data, elapsed_time, VIALS, param + '_raw')
 
             for param in temp_cal['params']:
+                raw_data = data['data'].get(param, [])
                 # Order raw data before saving values
-                for ss in range(16):
-                    raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
+                #for ss in range(16):
+                #    raw_data[ss] = data['data'].get(param, [])[channelIdx[str(ss)]["channel"]]
                         
                 self.save_data(raw_data, elapsed_time, VIALS, param + '_raw')
 
@@ -251,7 +253,7 @@ class EvolverDPU():
         for x in vials:
             od_coefficients = od_cal['coefficients'][x]
             temp_coefficients = temp_cal['coefficients'][x]
-            index_value = channelIdx[str(x)]["channel"]
+            index_value = x #channelIdx[str(x)]["channel"]
 
             # Try to apply calibration to OD
             try:
@@ -289,15 +291,13 @@ class EvolverDPU():
 
             # Try to apply calibration to temperature (read)
             try:
-                temp_value[x] = temp_data[channelIdx[str(x)]["channel"]]
-                temp_value[x] = (float(temp_value[x]) *
-                                temp_coefficients[0]) + temp_coefficients[1]
+                # temp_value[x] =  [channelIdx[str(x)]["channel"]]
+                temp_value[x] = (float(temp_data[x]) * temp_coefficients[0]) + temp_coefficients[1]
                 #print('temperature from vial %d: %.3f' % (x, temp_value[x]))
 
             except ValueError:
                 print("Temp Read Error")
-                logger.error('temperature read error for vial %d, setting to NaN'
-                            % x)
+                logger.error('temperature read error for vial %d, setting to NaN' % x)
                 temp_value[x]  = 'NaN'
         
         if self.exp_dir is not None:
@@ -335,9 +335,8 @@ class EvolverDPU():
                 raw_temperatures = [0] * 16
 
                 for x in vials:
-                    index = channelIdx[str(x)]["channel"]
-                    raw_temperatures[index] = str(int((temps[x] - temp_cal['coefficients'][x][1]) /
-                                            temp_cal['coefficients'][x][0]))
+                    #index = channelIdx[str(x)]["channel"]
+                    raw_temperatures[x] = str(int((temps[x] - temp_cal['coefficients'][x][1]) / temp_cal['coefficients'][x][0]))
                 self.update_temperature(raw_temperatures)
 
             else:
@@ -416,6 +415,7 @@ class EvolverDPU():
     ''' Experiment Related'''
     def config_exp(self, vials, experiment_params, quiet, verbose, always_yes = False):
         logger.info('initializing config')
+        print('initializing config')
         #os.path.join(exp_dir, 'evolver.log')
 
         if experiment_params == None:
@@ -481,15 +481,15 @@ class EvolverDPU():
             if os.path.exists(path_config):
                 print('existe')
 
-            with open(os.path.join(self.exp_dir, 'exp_config.json') , "w") as file:
-                json.dump({
+            with open(path_config , "w") as file:
+                json.dump(({
                     "name": self.exp_name,
                     "directory": self.exp_dir,
                     "operation_mode": self.operation_mode,
                     "use_blank": self.use_blank,
-                    "OD_initial": self.OD_initial,
+                    "OD_initial": str(self.OD_initial),
                     "experiment_params": self.experiment_params
-                }, file)
+                }), file)
                 
             os.makedirs(os.path.join(self.exp_dir, 'OD'))
             os.makedirs(os.path.join(self.exp_dir, 'od_135_raw'))
@@ -548,7 +548,7 @@ class EvolverDPU():
         self.exp_name = retireved_params["name"]
         self.operation_mode = retireved_params["operation_mode"]
         self.use_blank = retireved_params["use_blank"]
-        self.OD_initial = retireved_params["OD_initial"]
+        self.OD_initial = np.array(retireved_params["OD_initial"])
         self.experiment_params = retireved_params["experiment_params"]
         
         start_time = time.time()
@@ -582,6 +582,7 @@ class EvolverDPU():
         logger.info('saved a copy of current custom_script.py as %s' % backup_filename)
 
         self.exp_status = True
+        print('Started!')
         return start_time
     
     def _create_file(self, vial, param, directory=None, defaults=None):
@@ -668,9 +669,9 @@ class EvolverDPU():
                    'param': 'pump'}
 
         for x in vials:
-            pumpA_idx = channelIdx[str(x)]["A"]
-            pumpB_idx = channelIdx[str(x)]["B"]
-            pumpC_idx = channelIdx[str(x)]["C"]
+            pumpA_idx = x      # channelIdx[str(x)]["A"]
+            pumpB_idx = x + 16 # channelIdx[str(x)]["B"]
+            pumpC_idx = x + 32 # channelIdx[str(x)]["C"]
 
             # stop pumps if period is zero
             if period_config[x] == 0:
@@ -815,9 +816,7 @@ class EvolverDPU():
                         if not os.path.isdir(os.path.join(self.exp_dir, param + '_raw')) and param != 'pump':
                             os.makedirs(os.path.join(self.exp_dir, param + '_raw'))
                             for x in range(len(fit['coefficients'])):
-                                exp_str = "Experiment: {0} vial {1}, {2}".format(self.exp_name,
-                                        x,
-                                        time.strftime("%c"))
+                                exp_str = "Experiment: {0} vial {1}, {2}".format(self.exp_name, x, time.strftime("%c"))
                                 self._create_file(x, param + '_raw', defaults=[exp_str])
                     break
 
@@ -842,6 +841,109 @@ class EvolverDPU():
         lock.release()
         return info
 
+    def set_raw_calibration(self, data):     
+        logger.debug('setrawcalibration')
+        lock.acquire()
+        self.s.send(functions["setrawcalibration"]["id"].to_bytes(1,'big')+ bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+                break
+            else:
+                time.sleep(1)
+        lock.release()
+
+        return info
+
+    def get_calibration_names(self):
+        logger.debug('getcalibrationnames')
+
+        lock.acquire()
+        self.s.send(functions["getcalibrationnames"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+
+            if ready[0]:
+                msg = self.s.recv(30000)[:-2]
+                info = json.loads(msg)
+                break
+            else:
+                time.sleep(1)
+
+        lock.release()
+        return info
+    
+    def get_fit_names(self): # x -> list
+        logger.debug('getfitnames')
+
+        lock.acquire()
+        self.s.send(functions["getfitnames"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+
+            if ready[0]:
+                msg = self.s.recv(30000)[:-2]
+                info = json.loads(msg)
+                break
+            else:
+                time.sleep(1)
+
+        lock.release()
+        return info
+    
+    def get_calibration(self, data):    # data -> dict 
+        logger.debug('getcalibration')
+        lock.acquire()
+        self.s.send(functions["getcalibration"]["id"].to_bytes(1,'big')+ bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+                break
+            else:
+                time.sleep(1)
+
+        lock.release()
+        return info
+    
+    def set_fit_calibrations(self, data: dict) -> None:
+        logger.debug("setfitcalibrations")
+        lock.acquire()
+        self.s.send(
+            functions["setfitcalibrations"]["id"].to_bytes(1, "big")
+            + bytes(json.dumps(data), "utf-8")
+            + b"\r\n"
+        )
+        time.sleep(1)
+        lock.release()
+
+        return None
+    
+    def set_active_cal(self, data: dict) -> None:
+        logger.debug("setactiveodcal")
+        lock.acquire()
+        self.s.send(
+            functions["setactiveodcal"]["id"].to_bytes(1, "big")
+            + bytes(json.dumps(data), "utf-8")
+            + b"\r\n"
+        )
+        time.sleep(1)
+        lock.release()
+
+        return None
+    
+    '''
     def setrawcalibration(self, data):     
         logger.debug('setrawcalibration')
         lock.acquire()
@@ -859,23 +961,58 @@ class EvolverDPU():
         lock.release()
 
         return info
+    '''
     
-    def getcalibrationnames(self):
-        logger.debug('getcalibrationnames')
 
+    ''' Others '''        
+    def get_last_commands(self): # x -> dict
+        logger.debug('getlastcommands')
         lock.acquire()
-        self.s.send(functions["getcalibrationnames"]["id"].to_bytes(1,'big') + b'\r\n')
+        self.s.send(functions["getlastcommands"]["id"].to_bytes(1,'big') + b'\r\n')
         time.sleep(1)
 
         for _ in range(3):
-            print('A')
             ready = select.select([self.s], [], [], 2)
-
+            
             if ready[0]:
-                print('B')
-                msg = self.s.recv(30000)[:-2]
-                print(msg)
-                info = json.loads(msg)
+                info = self.s.recv(30000)[:-2]
+                lock.release()
+                return info
+            else:
+                time.sleep(1)
+        
+        # print(info)
+        
+    def get_num_commands(self): # x -> int
+        logger.debug('get_num_commands')
+        lock.acquire()
+        self.s.send(functions["get_num_commands"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            
+            if ready[0]:
+                value = json.loads(self.s.recv(30000)[:-2])
+                lock.release()
+                # string_value = value.decode('utf-8')
+                return value
+            time.sleep(1)
+
+        # print(string_value)
+        return None
+    
+    def get_device_name(self): # x -> dict
+        logger.debug('getdevicename')
+        lock.acquire()
+        self.s.send(functions["getdevicename"]["id"].to_bytes(1,'big') + b'\r\n')
+        time.sleep(1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
                 break
             else:
                 time.sleep(1)
@@ -883,6 +1020,8 @@ class EvolverDPU():
         print(info)
         return info
     
+
+    ''' Ending experiment '''
     def stop_all_pumps(self):
         '''
         Stop all pumps
@@ -899,9 +1038,12 @@ class EvolverDPU():
         Stop an experiment means stopping all pumps :D
         temperature set to "zero" and stir stopped
         '''
+        print('Stopping experiment')
         self.stop_all_pumps()
         self.update_temperature([4095]*16)
         self.update_stir_rate([0]*16)
+
+        self.exp_status = False
 
 
 
@@ -930,6 +1072,16 @@ def broadcast():
                 EVOLVER_NS.broadcast(data)
         time.sleep(1)
 
+def saved_exps():
+    global SAVE_PATH
+    dirs = []
+
+    all = os.listdir(SAVE_PATH)
+    for item in all:
+        if not os.path.isfile(item):
+            dirs += [item]
+    dirs.remove('__pycache__')
+    return dirs
 
 def setup_logging(filename, quiet, verbose):
     if quiet:
@@ -974,7 +1126,7 @@ def get_options(exp_dir):
                            help='Disable logging to file entirely')
     
     return parser.parse_args(), parser
-'''
+
 
 def vial2channel(data:list):
     indexes = [channelIdx[str(i)]["channel"] for i in VIALS]
@@ -985,7 +1137,7 @@ def vial2channel(data:list):
 def channel2vial(data:list):
     vial = [data[channelIdx[str(i)]["channel"]] for i in VIALS]
     return vial
-
+'''
 
 # MAIN
 if __name__ == '__main__':
@@ -1028,24 +1180,40 @@ if __name__ == '__main__':
                 if isinstance(command, str):
                     command = json.loads(command)
 
-                if command["command"] == "expt_config":
+                if command["command"] == "expt-config":
                     # Config experiment via GUI!
                     # {"payload": {"name": "data_t","function": "turbidostat","ip": "10.0.6.34","vial_configuration": [{"vial":0,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":1,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":2,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":3,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":4,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":5,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":6,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":7,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":8,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":9,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":10,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":11,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":12,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":13,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":14,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":15,"temp":30,"stir":8,"upper":0.85,"lower":0.3}]}, 
                     # "reply": True,
-                    # "command": "expt_config"}
+                    # "command": "expt-config"}
                     experiment_params = command["payload"]
                     config = EVOLVER_NS.config_exp(VIALS, experiment_params, 0, False, False)
 
                     if config:
-                        redis_client.lpush("socketio_answer", json.dumps({"expt_config_setted":None}))
+                        redis_client.lpush("socketio_answer", json.dumps({"expt-config-setted":None}))
                 
-                elif command["command"] == "expt_start":
+                elif command["command"] == "expt-start":
                     # Start an experiment via GUI!
                     # {"payload": {"name": "data_t"},
                     # "reply": True,
-                    # "command": "expt_start"}
+                    # "command": "expt-start"}
                     EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS, command["payload"]["name"], False)
-                    redis_client.lpush("socketio_answer", json.dumps({"expt_started":None}))
+                    redis_client.lpush("socketio_answer", json.dumps({"expt-started":None}))
+
+                elif command["command"] == "expt-stop":
+                    # Stop an experiment via GUI!
+                    # {"payload": {"name": "data_t"},
+                    # "reply": True,
+                    # "command": "expt-stop"}
+                    EVOLVER_NS.stop_exp()
+                    redis_client.lpush("socketio_answer", json.dumps({"expt-stopped":None}))
+
+                elif command["command"] == "expt-get-names":
+                    # Retrive names of saved experiments
+                    # {"payload": {"name": "data_t"},
+                    # "reply": True,
+                    # "command": "expt-get-names"}
+                    dirs = saved_exps()
+                    redis_client.lpush("socketio_answer", json.dumps({"expt-names":dirs}))
 
 
                 elif command["command"] == "command":
@@ -1056,18 +1224,54 @@ if __name__ == '__main__':
                     EVOLVER_NS.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(command["payload"]), 'utf-8') + b'\r\n')
                     lock.release()
 
+                elif command["command"] == "getfitnames":
+                    # Get information from all calibrations
+                    fitname = EVOLVER_NS.get_fit_names()
+                    redis_client.lpush("socketio_answer", json.dumps(fitname))
+
+                elif command["command"] == "getcalibrationnames":
+                    # Returns info of the calibrations that have at least one active adjustment
+                    print('If getcalibrationnames')
+                    calnames = EVOLVER_NS.get_calibration_names()
+                    redis_client.lpush("socketio_answer", json.dumps(calnames))
+                    
+                elif command["command"] == "setrawcalibration":
+                    # Select the raw calibration
+                    print('If setrawcalibration')
+                    ans = EVOLVER_NS.set_raw_calibration(command["payload"])
+                    redis_client.lpush("socketio_answer", ans)
+
                 elif command["command"] == "getactivecal":
+                    # Get information of the active calibration
                     activelcal = EVOLVER_NS.request_calibrations()
                     redis_client.lpush("socketio_answer", json.dumps(activelcal))
 
-                elif command["command"] == "getcalibrationnames":
-                    calnames = EVOLVER_NS.getcalibrationnames()
-                    print(calnames)
-                    
-                elif command["command"] == "setrawcalibration":
-                    ans = EVOLVER_NS.setrawcalibration(command["payload"])
-                    redis_client.lpush("socketio_answer", ans)
+                elif command["command"] == "setactiveodcal":
+                    EVOLVER_NS.set_active_cal(command["payload"])
 
+                elif command["command"] == "setfitcalibrations":    
+                    EVOLVER_NS.set_fit_calibrations(command["payload"])
+
+                elif command["command"] == "getcalibration":
+                    calib = EVOLVER_NS.get_calibration(command["payload"])
+                    redis_client.lpush("socketio_answer", json.dumps(calib))
+
+                elif command["command"] == "getdevicename":
+                    devicename = EVOLVER_NS.get_device_name()
+                    redis_client.lpush("socketio_answer", json.dumps(devicename))
+                
+                # elif command["command"] == "setdevicename":
+                #     EVOLVER_NS.set_device_name(command["payload"])
+                #     # redis_client.lpush("socketio_answer", json.dumps(fitname))
+
+                elif command["command"] == "getlastcommands":
+                    lastcommands = EVOLVER_NS.get_last_commands()
+                    lastcommands_loads = json.loads(lastcommands)
+                    redis_client.lpush("socketio_answer", json.dumps(lastcommands_loads))
+
+                elif command["command"] == "get_num_commands":
+                    num = EVOLVER_NS.get_num_commands()
+                    redis_client.lpush("socketio_answer", json.dumps(num))
 
                 time.sleep(1)
 
