@@ -1,8 +1,21 @@
-2023-08-30 17:22:51 - custom_script - [INFO] - turbidostat dilution for vial 0
-2023-08-30 17:22:51 - custom_script - [INFO] - turbidostat dilution for vial 1
-2023-08-30 17:22:51 - custom_script - [INFO] - turbidostat dilution for vial 4
-2023-08-30 17:22:51 - custom_script - [INFO] - turbidostat dilution for vial 5
-2023-08-30 17:33:09 - eVOLVER - [WARNING] - interrupt received, pausing experiment
-2023-08-30 17:33:09 - eVOLVER - [INFO] - stopping all pumps
-2023-08-30 17:33:09 - eVOLVER - [WARNING] - second interrupt received, terminating experiment
-2023-08-30 17:33:09 - eVOLVER - [INFO] - stopping all pumps
+2023-09-01 15:58:10 - custom_script - [INFO] - turbidostat dilution for vial 0
+2023-09-01 15:58:10 - custom_script - [INFO] - turbidostat dilution for vial 1
+2023-09-01 15:58:10 - custom_script - [INFO] - turbidostat dilution for vial 4
+2023-09-01 16:01:15 - custom_script - [INFO] - turbidostat dilution for vial 0
+2023-09-01 16:01:15 - custom_script - [INFO] - turbidostat dilution for vial 1
+2023-09-01 16:01:15 - custom_script - [INFO] - turbidostat dilution for vial 4
+2023-09-01 16:04:20 - custom_script - [INFO] - turbidostat dilution for vial 0
+2023-09-01 16:04:20 - custom_script - [INFO] - turbidostat dilution for vial 1
+2023-09-01 16:04:20 - custom_script - [INFO] - turbidostat dilution for vial 4
+2023-09-01 16:07:26 - custom_script - [INFO] - turbidostat dilution for vial 0
+2023-09-01 16:07:26 - custom_script - [INFO] - turbidostat dilution for vial 1
+2023-09-01 16:07:26 - custom_script - [INFO] - turbidostat dilution for vial 4
+2023-09-01 16:10:31 - custom_script - [INFO] - turbidostat dilution for vial 0
+2023-09-01 16:10:31 - custom_script - [INFO] - turbidostat dilution for vial 1
+2023-09-01 16:10:31 - custom_script - [INFO] - turbidostat dilution for vial 4
+2023-09-01 16:13:36 - custom_script - [INFO] - turbidostat dilution for vial 0
+2023-09-01 16:13:36 - custom_script - [INFO] - turbidostat dilution for vial 1
+2023-09-01 16:13:36 - custom_script - [INFO] - turbidostat dilution for vial 4
+2023-09-01 16:16:41 - custom_script - [INFO] - turbidostat dilution for vial 0
+2023-09-01 16:16:41 - custom_script - [INFO] - turbidostat dilution for vial 1
+2023-09-01 16:16:41 - custom_script - [INFO] - turbidostat dilution for vial 4

@@ -732,7 +732,6 @@ class EvolverDPU():
         self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(command), 'utf-8') + b'\r\n')
         lock.release()
 
-    
 
     ''' Calibration-related '''
     def activecalibrations(self, data: dict):
@@ -884,23 +883,23 @@ class EvolverDPU():
         # print(info)
         return info
 
-    def get_calibration(self, data):    # data -> dict 
-        logger.debug('getcalibration')
+    def get_calibration(self) -> bytes | None:
+        """
+        Get calibration.
+        """
         lock.acquire()
-        self.s.send(functions["getcalibration"]["id"].to_bytes(1,'big')+ bytes(json.dumps(data), 'utf-8') + b'\r\n')
-        time.sleep(1)
+        self.s.send(functions["getcalibration"]["id"].to_bytes(1, "big") + b"\r\n")
+        time.sleep(0.1)
 
         for _ in range(3):
             ready = select.select([self.s], [], [], 2)
-            
             if ready[0]:
-                info = self.s.recv(30000)[:-2]
-                break
-            else:
-                time.sleep(1)
-        lock.release()
-        print(info)
-        return info
+                info = json.loads(self.s.recv(30000)[:-2])
+                lock.release()
+                return info
+            time.sleep(1)
+
+        return None
     
     def set_fit_calibrations(self, data: dict) -> None:
         logger.debug("setfitcalibrations")
@@ -1140,28 +1139,21 @@ if __name__ == '__main__':
                     lock.release()
 
                 elif command["command"] == "getfitnames":
-                    # Get information from all calibrations
                     fitname = EVOLVER_NS.get_fit_names()
                     redis_client.lpush("socketio_answer", json.dumps(fitname))
 
                 elif command["command"] == "getcalibrationnames":
-                    # Returns info of the calibrations that have at least one active adjustment
-                    print('If getcalibrationnames')
                     calnames = EVOLVER_NS.get_calibration_names()
                     redis_client.lpush("socketio_answer", json.dumps(calnames))
                     
                 elif command["command"] == "setrawcalibration":
-                    # Select the raw calibration
-                    print('If setrawcalibration')
                     ans = EVOLVER_NS.set_raw_calibration(command["payload"])
                     redis_client.lpush("socketio_answer", ans)
 
                 elif command["command"] == "getactivecal":
-                    # Get information of the active calibration
                     activelcal = EVOLVER_NS.request_calibrations()
                     redis_client.lpush("socketio_answer", json.dumps(activelcal))
             
-
                 elif command["command"] == "setactiveodcal":
                     EVOLVER_NS.set_active_cal(command["payload"])
 
@@ -1175,10 +1167,6 @@ if __name__ == '__main__':
                 elif command["command"] == "getdevicename":
                     devicename = EVOLVER_NS.get_device_name()
                     redis_client.lpush("socketio_answer", json.dumps(devicename))
-                
-                # elif command["command"] == "setdevicename":
-                #     EVOLVER_NS.set_device_name(command["payload"])
-                #     # redis_client.lpush("socketio_answer", json.dumps(fitname))
 
                 elif command["command"] == "getlastcommands":
                     lastcommands = EVOLVER_NS.get_last_commands()
@@ -1188,10 +1176,6 @@ if __name__ == '__main__':
                 elif command["command"] == "get_num_commands":
                     num = EVOLVER_NS.get_num_commands()
                     redis_client.lpush("socketio_answer", json.dumps(num))
-
-                
-
-
 
                 time.sleep(1)
 
