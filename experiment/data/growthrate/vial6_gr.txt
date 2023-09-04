@@ -1,2 +1,2 @@
-Experiment: data vial 6, Wed Aug 23 09:14:42 2023
+Experiment: data vial 6, Mon Sep  4 10:34:07 2023
 0,0

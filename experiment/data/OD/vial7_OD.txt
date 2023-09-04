@@ -1,3 +1,5 @@
-Experiment: data vial 7, Wed Aug 23 09:14:42 2023
-0.0004,nan
-0.0034,nan
+Experiment: data vial 7, Mon Sep  4 10:34:07 2023
+0.0057,nan
+0.0115,nan
+0.0173,nan
+0.0231,nan
