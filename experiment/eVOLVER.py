@@ -18,7 +18,7 @@ import redis
 
 import custom_script
 from consts import functions
-from custom_script import EXP_NAME, OPERATION_MODE, STIR, TEMP
+from custom_script import EXP_NAME, OPERATION_MODE, STIR, TEMP, LED
 from utils import get_file_handler, get_logger
 
 # Should not be changed
@@ -606,6 +606,17 @@ class EvolverDPU:
         )
         lock.release()
 
+    def update_led(self, leds: list, immediate = True):
+        '''
+        Update Od LED values. Values in list should be in raw values 0-4095
+        '''
+        data = {'param': 'od_led', 'value': leds, 'immediate': immediate, 'recurring': True}
+        logger.debug('OD LED command: %s' % data)
+
+        lock.acquire()
+        self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
+        lock.release()
+
     def fluid_command(self, MESSAGE: list):
         """
         Update fluids values
@@ -1120,6 +1131,7 @@ if __name__ == "__main__":
 
     # Creates eVOLVER object
     EVOLVER_NS = EvolverDPU()
+    EVOLVER_NS.update_led(LED)
 
     # Start by stopping any existing experiment
     EVOLVER_NS.stop_all_pumps()

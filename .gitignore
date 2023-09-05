@@ -1,5 +1,6 @@
 # Experiments
 .txt
+experiment/data
 
 # Environments
 .env
