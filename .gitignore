@@ -1,5 +1,5 @@
 # Experiments
-.txt
+*.txt
 experiment/data
 
 # Environments
