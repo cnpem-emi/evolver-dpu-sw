@@ -822,6 +822,24 @@ class EvolverDPU():
 
     # ----- [BEGGINING] Custom functions -----
 
+    def get_update_interval(self) -> str:
+        """
+        Get update interval.
+        """
+        lock.acquire()
+        self.s.send(functions["getupdateinterval"]["id"].to_bytes(1, "big") + b"\r\n")
+        time.sleep(0.1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = json.loads(self.s.recv(30000)[:-2])
+                lock.release()
+                return info
+            time.sleep(.1)
+
+        return "" 
+
     def appendcal(self, data: dict):
         """
         Append calibration.
@@ -1034,7 +1052,7 @@ class EvolverDPU():
         return info
 
     # ----- [END] Custom functions -----
-    
+
     def get_last_commands(self): # x -> dict
         logger.debug('getlastcommands')
         lock.acquire()
@@ -1226,7 +1244,7 @@ if __name__ == '__main__':
 
     # Creates eVOLVER object and turns on leds
     EVOLVER_NS = EvolverDPU()
-    EVOLVER_NS.update_led(LED)
+    EVOLVER_NS.update_led([i for i in range(16)])
 
     # Start by stopping any existing experiment
     EVOLVER_NS.stop_all_pumps()
@@ -1254,11 +1272,36 @@ if __name__ == '__main__':
                 if isinstance(command, str):
                     command = json.loads(command)
 
-                print(command)
-                if command["command"] == "initialize_exp":
-                    print("A")
-                    redis_client.lpush("socketio_answer", {"teste": ["executado"]})
-                    # EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp()
+                if command["command"] == "expt-config":
+                    # Config experiment via GUI!
+                    # {"payload": {"name": "data_t","function": "turbidostat","ip": "10.0.6.34","vial_configuration": [{"vial":0,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":1,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":2,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":3,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":4,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":5,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":6,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":7,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":8,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":9,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":10,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":11,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":12,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":13,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":14,"temp":30,"stir":8,"upper":0.85,"lower":0.3},{"vial":15,"temp":30,"stir":8,"upper":0.85,"lower":0.3}]}, 
+                    # "reply": True,
+                    # "command": "expt-config"}
+                    experiment_params = command["payload"]
+                    config = EVOLVER_NS.config_exp(VIALS, experiment_params, 0, False, False)
+
+                    if config:
+                        redis_client.lpush("socketio_answer", json.dumps({"expt-config-setted":None}))
+                
+                elif command["command"] == "expt-start":
+                    # Start an experiment via GUI!
+                    # {"payload": {"name": "data_t"},
+                    # "reply": True,
+                    # "command": "expt-start"}
+                    EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(VIALS, command["payload"]["name"], False)
+                    redis_client.lpush("socketio_answer", json.dumps({"expt-started":None}))
+
+                elif command["command"] == "expt-stop":
+                    # Stop an experiment via GUI!
+                    # {"payload": {"name": "data_t", "vials": [0,1,2,3]},
+                    # "reply": True,
+                    # "command": "expt-stop"}
+                    #if len(command["payload"]["vials"]) == 16:
+                    EVOLVER_NS.stop_exp()
+                    #else:
+                    #    EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
+
+                    redis_client.lpush("socketio_answer", json.dumps({"expt-stopped":None}))
 
                 elif command["command"] == "command":
                     lock.acquire()
@@ -1309,6 +1352,11 @@ if __name__ == '__main__':
                     ans = EVOLVER_NS.get_device_name()
                     redis_client.lpush("socketio_answer", ans)
                     print("pushed")
+                
+                elif command["command"] == "getupdateinterval":
+                    ans = EVOLVER_NS.get_update_interval()
+                    redis_client.lpush("update_interval", ans)
+
                 else:
                     print(command)
 

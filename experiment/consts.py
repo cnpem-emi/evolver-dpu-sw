@@ -14,4 +14,5 @@ functions = {
     "get_num_commands": {"id": 13},
     "sub_command": {"id": 14},
     "appendcal": {"id": 15},
+    "getupdateinterval": {"id": 16},
     }
