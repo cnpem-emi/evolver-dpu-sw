@@ -1,15 +1,1 @@
-Experiment: data vial 3, Tue Sep  5 06:33:00 2023
-0.0003,nan
-0.0036,nan
-0.0114,nan
-0.0172,nan
-0.023,nan
-0.0288,nan
-0.0345,nan
-0.0402,nan
-0.0459,nan
-0.0516,nan
-0.0573,nan
-0.063,nan
-0.0687,nan
-0.0744,nan
+Experiment: data vial 3, Tue Sep  5 07:00:06 2023
