@@ -18,7 +18,7 @@ from threading import Thread, Lock
 from consts import functions
 
 import custom_script
-from custom_script import STIR, TEMP, LED
+#from custom_script import STIR, TEMP, LED
 
 # Should not be changed
 VIALS = [x for x in range(16)]
@@ -822,6 +822,25 @@ class EvolverDPU():
 
     # ----- [BEGGINING] Custom functions -----
 
+    def get_all_calibrations(self) -> list:
+        """
+        Get all calibrations.
+        """
+        lock.acquire()
+        self.s.send(functions["getallcalibrations"]["id"].to_bytes(1, "big") + b"\r\n")
+        time.sleep(0.1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = json.loads(self.s.recv(3000000)[:-2])
+                lock.release()
+                print("Printing from getallcalibrations.", type(info))
+                return info
+            time.sleep(1)
+
+        return []
+
     def get_update_interval(self) -> str:
         """
         Get update interval.
@@ -996,13 +1015,13 @@ class EvolverDPU():
                     # Create raw data directories and files for params needed
                     for param in fit["params"]:
                         if (
-                            not os.path.isdir(os.path.join(EXP_DIR, param + "_raw"))
+                            not os.path.isdir(os.path.join(self.exp_dir, param + "_raw"))
                             and param != "pump"
                         ):
-                            os.makedirs(os.path.join(EXP_DIR, param + "_raw"))
+                            os.makedirs(os.path.join(self.exp_dir, param + "_raw"))
                             for x in range(len(fit["coefficients"])):
                                 exp_str = "Experiment: {0} vial {1}, {2}".format(
-                                    EXP_NAME, x, time.strftime("%c")
+                                    self.exp_name, x, time.strftime("%c")
                                 )
                                 self._create_file(x, param + "_raw", defaults=[exp_str])
                     break
@@ -1121,6 +1140,23 @@ class EvolverDPU():
         self.s.send(functions['command']['id'].to_bytes(1,'big') + bytes(json.dumps(data), 'utf-8') + b'\r\n')
         lock.release()
 
+    def stop_some_vials(self, vials: list):
+        pump = ['--' for i in range(48)]
+        temp = ['--' for i in range(16)]
+        stir = ['--' for i in range(16)]
+
+        for vial in vials:
+            pump[vial] = 0
+            pump[vial + 16] = 0
+            pump[vial + 32] = 0
+            stir[vial] = 0
+            temp[vial] = 4095
+
+        self.update_temperature(temp)
+        self.update_stir_rate(stir)
+        self.fluid_command(pump)
+
+
     def stop_exp(self):
         '''
         Stop an experiment means stopping all pumps :D
@@ -1156,7 +1192,8 @@ def broadcast():
                 data = broadcastSocket.recv(4096)
                 data = json.loads(data)
                 redis_client.set("broadcast", json.dumps(data))
-
+                
+                print(data)
                 EVOLVER_NS.broadcast(data)
         time.sleep(1)
 
@@ -1214,17 +1251,6 @@ def get_options(exp_dir):
                            help='Disable logging to file entirely')
     
     return parser.parse_args(), parser
-
-
-def vial2channel(data:list):
-    indexes = [channelIdx[str(i)]["channel"] for i in VIALS]
-    channel = [data[i] for i in indexes]
-    return channel
-
-
-def channel2vial(data:list):
-    vial = [data[channelIdx[str(i)]["channel"]] for i in VIALS]
-    return vial
 '''
 
 # MAIN
@@ -1244,10 +1270,11 @@ if __name__ == '__main__':
 
     # Creates eVOLVER object and turns on leds
     EVOLVER_NS = EvolverDPU()
-    EVOLVER_NS.update_led([i for i in range(16)])
-
+    EVOLVER_NS.update_led([2048 for i in range(16)])
+    
     # Start by stopping any existing experiment
     EVOLVER_NS.stop_all_pumps()
+    #EVOLVER_NS.fluid_command(['1|2' for i in range(48)])
     
     # Is experiment paused ?
     paused = False
@@ -1260,6 +1287,10 @@ if __name__ == '__main__':
     while True:
         try:
             while True:
+
+                # Clean the redis queue
+                redis_client.delete("socketio_answer")
+
                 # wait until there is a command in the queue (Redis variable)
                 # command = {"payload": bytes, "reply": boolean}
                 command = redis_client.brpop("socketio")
@@ -1296,10 +1327,10 @@ if __name__ == '__main__':
                     # {"payload": {"name": "data_t", "vials": [0,1,2,3]},
                     # "reply": True,
                     # "command": "expt-stop"}
-                    #if len(command["payload"]["vials"]) == 16:
-                    EVOLVER_NS.stop_exp()
-                    #else:
-                    #    EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
+                    if len(command["payload"]["vials"]) == 16:
+                        EVOLVER_NS.stop_exp()
+                    else:
+                        EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
 
                     redis_client.lpush("socketio_answer", json.dumps({"expt-stopped":None}))
 
@@ -1355,7 +1386,11 @@ if __name__ == '__main__':
                 
                 elif command["command"] == "getupdateinterval":
                     ans = EVOLVER_NS.get_update_interval()
-                    redis_client.lpush("update_interval", ans)
+                    redis_client.lpush("socktio_answer", ans)
+                
+                elif command["command"] == "getallcalibrations":
+                    ans = EVOLVER_NS.get_all_calibrations()
+                    redis_client.lpush("socketio_answer", json.dumps(ans))
 
                 else:
                     print(command)
