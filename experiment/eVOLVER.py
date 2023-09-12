@@ -1142,18 +1142,18 @@ class EvolverDPU():
 
     def stop_some_vials(self, vials: list):
         pump = ['--' for i in range(48)]
-        temp = ['nan' for i in range(16)]
-        stir = ['nan' for i in range(16)]
+        #temp = ['NaN' for i in range(16)]
+        #stir = ['nan' for i in range(16)]
 
         for vial in vials:
             pump[vial] = 0
             pump[vial + 16] = 0
             pump[vial + 32] = 0
-            stir[vial] = 0
-            temp[vial] = 4095
+            #stir[vial] = 0
+            #temp[vial] = 4095
 
-        self.update_temperature(temp)
-        self.update_stir_rate(stir)
+        #self.update_temperature(temp)
+        #self.update_stir_rate(stir)
         self.fluid_command(pump)
 
 
@@ -1193,7 +1193,7 @@ def broadcast():
                 data = json.loads(data)
                 redis_client.set("broadcast", json.dumps(data))
                 
-                print(data)
+                #print(data)
                 EVOLVER_NS.broadcast(data)
         time.sleep(1)
 
