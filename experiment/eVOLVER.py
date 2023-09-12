@@ -222,8 +222,8 @@ class EvolverDPU():
     def transform_data(self, data, vials, od_cal, temp_cal):
         od_data_2 = None
 
-        if od_cal['type'] == THREE_DIMENSION:
-            od_data_2 = data['data'].get(od_cal['params'][1], None)
+        #if od_cal['type'] == THREE_DIMENSION:
+            #od_data_2 = data['data'].get(od_cal['params'][1], None)
 
         od_data = data['data'].get(od_cal['params'][0], None)
         temp_data = data['data'].get(temp_cal['params'][0], None)
@@ -833,10 +833,10 @@ class EvolverDPU():
         for _ in range(3):
             ready = select.select([self.s], [], [], 2)
             if ready[0]:
-                info = json.loads(self.s.recv(3000000)[:-2])
+                server_response = json.loads(self.s.recv(3000000)[:-2])
                 lock.release()
-                print("Printing from getallcalibrations.", type(info))
-                return info
+                logger.debug("getallcalibrations: %s" % server_response)
+                return server_response
             time.sleep(1)
 
         return []
@@ -858,6 +858,40 @@ class EvolverDPU():
             time.sleep(.1)
 
         return "" 
+
+    def setodcalibration(self, data: dict) -> dict:
+        """
+        Get all calibration from server and write to od_cal.json
+        the calibration with name data["name"].
+        """
+        all_calibrations = self.get_all_calibrations()
+        print("\n\n")
+        print(len(all_calibrations))
+        for calibration in all_calibrations:
+            print(calibration)
+            print("\n\n")
+            if calibration["name"] == data["name"]:
+                with open(OD_CAL_PATH, "w") as f:
+                    json.dump(calibration['fits'], f)
+                response = {"message": "temp calibration set"}
+                return response
+            
+        response = {"message": "temp calibration not set"}
+        return response
+    
+    # copilot: write a method called settempcalibration analogous to setodcalibration
+    def settempcalibration(self, data: dict) -> str:
+        """
+        Get all calibration from server and write to temp_cal.json
+        the calibration with name data["name"].
+        """
+        all_calibrations = self.get_all_calibrations()
+        for calibration in all_calibrations:
+            if calibration["name"] == data["name"]:
+                with open(TEMP_CAL_PATH, "w") as f:
+                    json.dump(calibration, f)
+                response = {"message": "calibration set"}
+                return response
 
     def appendcal(self, data: dict):
         """
@@ -1257,6 +1291,7 @@ def get_options(exp_dir):
 if __name__ == '__main__':
     # Connects to local Redis database, which will be used to communicate with SocketIO application (graphical user interface)
     redis_client = redis.StrictRedis("127.0.0.1")
+    redis_client.delete("socketio_answer")
 
     # Get params from JSON file
     experiment_params = None
@@ -1390,6 +1425,14 @@ if __name__ == '__main__':
                 
                 elif command["command"] == "getallcalibrations":
                     ans = EVOLVER_NS.get_all_calibrations()
+                    redis_client.lpush("socketio_answer", json.dumps(ans))
+
+                elif command["command"] == "setodcalibration":
+                    ans = EVOLVER_NS.setodcalibration(command["payload"])
+                    redis_client.lpush("socketio_answer", json.dumps(ans))
+
+                elif command["command"] == "settempcalibration":
+                    ans = EVOLVER_NS.settempcalibration(command["payload"])
                     redis_client.lpush("socketio_answer", json.dumps(ans))
 
                 else:
