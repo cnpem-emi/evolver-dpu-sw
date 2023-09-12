@@ -15,4 +15,5 @@ functions = {
     "sub_command": {"id": 14},
     "appendcal": {"id": 15},
     "getupdateinterval": {"id": 16},
+    "getallcalibrations": {"id": 17},
     }

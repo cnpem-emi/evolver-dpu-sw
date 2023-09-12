@@ -18,7 +18,7 @@ from threading import Thread, Lock
 from consts import functions
 
 import custom_script
-#from custom_script import STIR, TEMP, LED
+from custom_script import STIR, TEMP, LED
 
 # Should not be changed
 VIALS = [x for x in range(16)]
@@ -1142,8 +1142,8 @@ class EvolverDPU():
 
     def stop_some_vials(self, vials: list):
         pump = ['--' for i in range(48)]
-        temp = ['--' for i in range(16)]
-        stir = ['--' for i in range(16)]
+        temp = ['nan' for i in range(16)]
+        stir = ['nan' for i in range(16)]
 
         for vial in vials:
             pump[vial] = 0
