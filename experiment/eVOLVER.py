@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 
+import argparse
+import asyncio
+import json
+import logging
 import os
+import pickle
+import select
+import shutil
+import socket
 import sys
 import time
-import pickle
-import shutil
-import logging
-import argparse
-import numpy as np
-import json
-import select
-import socket
 import traceback
-import asyncio
+from threading import Lock, Thread
+
+import numpy as np
 import redis
-from threading import Thread, Lock
-from consts import functions
 
 import custom_script
-from custom_script import STIR, TEMP, LED
+from consts import functions
+from custom_script import LED, STIR, TEMP
 
 # Should not be changed
 VIALS = [x for x in range(16)]
