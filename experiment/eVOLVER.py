@@ -85,7 +85,7 @@ class EvolverDPU:
     exp_dir = None
     operation_mode = None
 
-    start_time = time.time()
+    start_time = 0
     use_blank = False
     OD_initial = None
     experiment_params = None
@@ -130,9 +130,9 @@ class EvolverDPU:
         This method converts raw data into real values and ask for new step from custom functions.
         """
 
-        print("\nBroadcast received")
-        elapsed_time = round((time.time() - self.start_time) / 3600, 4)
-        print("Elapsed time: %.4f hours" % elapsed_time)
+        #print("\nBroadcast received")
+        #elapsed_time = round((time.time() - self.start_time) / 3600, 4)
+        #print("Elapsed time: %.4f hours" % elapsed_time)
 
         # Check if calibration files are available
         if not self.check_for_calibrations():
@@ -147,17 +147,19 @@ class EvolverDPU:
 
         # Apply calibrations and update temperatures if needed
         data = self.transform_data(data, VIALS, od_cal, temp_cal)
-        print("DATA: ", data)
+        if data is None:
+            return
+        #print("DATA: ", data)
 
         # Should we "blank" the OD?
         if self.use_blank and self.OD_initial is None:
             logger.info("setting initial OD reading")
-            self.OD_initial = data["transformed"]["od"]
+            self.OD_initial = np.array(data["transformed"]["od"])
 
         elif self.OD_initial is None:
             self.OD_initial = np.zeros(len(VIALS))
 
-        data["transformed"]["od"] = data["transformed"]["od"] - self.OD_initial
+        data["transformed"]["od"] = list(np.array(data["transformed"]["od"]) - self.OD_initial)
         print("OD: ", data["transformed"]["od"][:8])
         print("Temp: ", data["transformed"]["temp"][:8])
 
@@ -167,6 +169,8 @@ class EvolverDPU:
 
         if self.exp_status is False:
             return
+
+        elapsed_time = round((time.time() - self.start_time) / 3600, 4)
 
         # Save data into .csv files
         try:
@@ -230,6 +234,7 @@ class EvolverDPU:
 
     def transform_data(self, data, vials, od_cal, temp_cal):
         od_data_2 = None
+        #print(od_cal)
 
         # if od_cal['type'] == THREE_DIMENSION:
         # od_data_2 = data['data'].get(od_cal['params'][1], None)
@@ -1370,7 +1375,7 @@ def broadcast():
                 data = json.loads(data)
                 redis_client.set("broadcast", json.dumps(data))
 
-                print(data)
+                #print("BROADCAST", data)
                 EVOLVER_NS.broadcast(data)
         time.sleep(1)
 
@@ -1458,10 +1463,10 @@ if __name__ == "__main__":
                 )
 
             elif command["command"] == "expt-stop":
-                if len(command["payload"]["vials"]) == 16:
-                    EVOLVER_NS.stop_exp()
-                else:
-                    EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
+                #if len(command["payload"]["vials"]) == 16:
+                EVOLVER_NS.stop_exp()
+                #else:
+                #    EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
 
                 redis_client.lpush(
                     "socketio_answer", json.dumps({"expt-stopped": None})

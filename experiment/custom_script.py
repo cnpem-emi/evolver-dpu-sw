@@ -19,7 +19,7 @@ LED = [2048] * 16 # 0 a 4095
 TEMP = [25] * 16   # degrees C, makes 16-value list
 STIR = [30] * 16   # 0 a 100%
 
-VOLUME =  45 # mL - Total vial volume
+VOLUME =  20 #45 # mL - Total vial volume
 #OPERATION_MODE = 'chemostat' # use to choose between 'turbidostat' and 'chemostat' functions
 ##### END OF USER DEFINED GENERAL SETTINGS #####
 
@@ -141,17 +141,14 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
         lower_thresh = list(map(lambda x: x['lower'], eVOLVER.experiment_params['vial_configuration']))
         upper_thresh = list(map(lambda x: x['upper'], eVOLVER.experiment_params['vial_configuration']))
 
-
     #Alternatively, use 16 value list to set different thresholds, use 9999 for vials not being used
     #lower_thresh = [0.2, 0.2, 0.3, 0.3, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999]
     #upper_thresh = [0.4, 0.4, 0.4, 0.4, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999, 9999]
-
 
     ##### USER DEFINED VARIABLES #####
     stop_after_n_curves = np.inf #set to np.inf to never stop, or integer value to stop diluting after certain number of growth curves
     OD_values_to_average = 6  # Number of values to calculate the OD average
     ##### END OF USER DEFINED VARIABLES #####
-
 
     ##### Turbidostat Settings #####
     #Tunable settings for overflow protection, pump scheduling etc. Unlikely to change between expts
@@ -184,16 +181,20 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
         average_OD = 0
 
         # Determine whether turbidostat dilutions are needed
-        enough_ODdata = (len(data) > 7) #logical, checks to see if enough data points (couple minutes) for sliding window
+        #enough_ODdata = (len(data) > 7) #logical, checks to see if enough data points (couple minutes) for sliding window
         collecting_more_curves = (num_curves <= (stop_after_n_curves + 2)) #logical, checks to see if enough growth curves have happened
-
-        if data.size != 0 and enough_ODdata:
+        #print(enough_ODdata)
+        
+        if data.size != 0: # and enough_ODdata:
+            #print("ENOUH DATA: ", enough_ODdata)
             od_values_from_file = data[:,1]
+            #print("PARTE3: ", od_values_from_file)
             average_OD = float(np.median(od_values_from_file)) # Take median to avoid outlier
-
+            #print(average_OD)
             #if recently exceeded upper threshold, note end of growth curve in ODset, 
             # allow dilutions to occur and growthrate to be measured
             if (average_OD > upper_thresh[x]) and (ODset != lower_thresh[x]):
+                #print("\tIF 1")
                 text_file = open(ODset_path, "a+")
                 text_file.write("{0},{1}\n".format(elapsed_time, lower_thresh[x]))
                 text_file.close()
@@ -204,6 +205,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
 
             #if have approx. reached lower threshold, note start of growth curve in ODset
             if (average_OD < (lower_thresh[x] + (upper_thresh[x] - lower_thresh[x])/3)) and (ODset != upper_thresh[x]):
+                #print("\tIF 2")
                 text_file = open(ODset_path, "a+")
                 text_file.write("{0},{1}\n".format(elapsed_time, upper_thresh[x]))
                 text_file.close()
@@ -211,6 +213,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
 
             #if need to dilute to lower threshold, then calculate amount of time to pump
             if average_OD > ODset and collecting_more_curves:
+                #print("\tIF 3")
                 time_in = -(np.log(lower_thresh[x]/average_OD) * VOLUME) / flow_rate[x]
 
                 if time_in > 20:
@@ -224,7 +227,9 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
                 data = np.genfromtxt(file_path, delimiter=',')
                 last_pump = data[len(data)-1][0]
                 
+                #print(last_pump, elapsed_time, pump_wait)
                 if ((elapsed_time - last_pump)*60) >= pump_wait: # if sufficient time since last pump, send command to Arduino
+                    #print("\tIF 4")
                     logger.info('turbidostat dilution for vial %d' % x)
                     # influx pump ('A')
                     MESSAGE[x] = str(time_in)
@@ -241,6 +246,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
             logger.debug('not enough OD measurements for vial %d' % x)
 
     # send fluidic command only if we are actually turning on any of the pumps
+    #print(MESSAGE)
     if MESSAGE != ['--'] * 48:
         eVOLVER.fluid_command(MESSAGE)
 
