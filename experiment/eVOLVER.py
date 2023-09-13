@@ -145,6 +145,7 @@ class EvolverDPU():
 
         # Apply calibrations and update temperatures if needed
         data = self.transform_data(data, VIALS, od_cal, temp_cal)
+        print("DATA: ", data)
 
         # Should we "blank" the OD?
         if self.use_blank and self.OD_initial is None:
@@ -872,7 +873,7 @@ class EvolverDPU():
             print("\n\n")
             if calibration["name"] == data["name"]:
                 with open(OD_CAL_PATH, "w") as f:
-                    json.dump(calibration['fits'], f)
+                    json.dump(calibration['fits'][0], f)
                 response = {"message": "temp calibration set"}
                 return response
             
@@ -1227,7 +1228,7 @@ def broadcast():
                 data = json.loads(data)
                 redis_client.set("broadcast", json.dumps(data))
                 
-                #print(data)
+                print(data)
                 EVOLVER_NS.broadcast(data)
         time.sleep(1)
 

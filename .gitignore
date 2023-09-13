@@ -1,4 +1,5 @@
 # Experiments
+*.pikle
 *.txt
 experiment/data
 

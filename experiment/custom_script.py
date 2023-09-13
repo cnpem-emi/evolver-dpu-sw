@@ -52,8 +52,8 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
         print(eVOLVER.experiment_params)
         rate_config = list(map(lambda x: x['rate'], eVOLVER.experiment_params['vial_configuration']))
         stir = list(map(lambda x: x['stir'], eVOLVER.experiment_params['vial_configuration']))
-        start_time= list(map(lambda x: x['startTime'], eVOLVER.experiment_params['vial_configuration']))
-        start_OD= list(map(lambda x: x['startOD'], eVOLVER.experiment_params['vial_configuration']))
+        start_time= list(map(lambda x: x['starttime'], eVOLVER.experiment_params['vial_configuration']))
+        start_OD= list(map(lambda x: x['startod'], eVOLVER.experiment_params['vial_configuration']))
 
     ##### Chemostat Settings #####
 
