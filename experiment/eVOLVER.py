@@ -25,7 +25,7 @@ from custom_script import LED, STIR, TEMP
 VIALS = [x for x in range(16)]
 
 SAVE_PATH = os.path.dirname(os.path.realpath(__file__))
-# EXP_DIR = None   # os.path.join(SAVE_PATH, EXP_NAME)
+EXPERIMENT_DATA_PATH = os.path.join(SAVE_PATH, "experiment_data")
 # EXP_NAME = None
 # OPERATION_MODE = None
 
@@ -461,7 +461,8 @@ class EvolverDPU:
 
         self.experiment_params = experiment_params
         self.exp_name = experiment_params["name"]
-        self.exp_dir = os.path.join(SAVE_PATH, self.exp_name)
+        # self.exp_dir = os.path.join(SAVE_PATH, self.exp_name)
+        self.exp_dir = os.path.join(EXPERIMENT_DATA_PATH, self.exp_name)
         self.operation_mode = experiment_params["function"]
 
         if os.path.exists(self.exp_dir):

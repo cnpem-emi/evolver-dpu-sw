@@ -1,5 +1,5 @@
 {
-    "python.linting.pylamaEnabled": true,
+    "python.linting.pylamaEnabled": false,
     "python.linting.enabled": true,
     "conventionalCommits.scopes": [
         "git",
@@ -8,5 +8,6 @@
     "[python]": {
         "editor.defaultFormatter": "ms-python.black-formatter"
     },
-    "python.formatting.provider": "none"
+    "python.formatting.provider": "none",
+    "python.linting.pylintEnabled": true
 }
