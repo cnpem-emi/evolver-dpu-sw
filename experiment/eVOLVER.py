@@ -162,6 +162,7 @@ class EvolverDPU:
         data["transformed"]["od"] = list(np.array(data["transformed"]["od"]) - self.OD_initial)
         print("OD: ", data["transformed"]["od"][:8])
         print("Temp: ", data["transformed"]["temp"][:8])
+        print()
 
         if data is None:
             logger.error("could not tranform raw data, skipping user-defined functions")
@@ -588,14 +589,16 @@ class EvolverDPU:
 
     def initialize_exp(self, vials, exp_name, always_yes=False):
         logger.info("initializing experiment")
+        print("initializing experiment")
 
-        if os.path.exists(os.path.join(SAVE_PATH, exp_name)):
-            self.exp_dir = os.path.join(SAVE_PATH, exp_name)
+        if os.path.exists(os.path.join(EXPERIMENT_DATA_PATH, exp_name)):
+            self.exp_dir = os.path.join(EXPERIMENT_DATA_PATH, exp_name)
 
         else:
             logger.info("no experiment configuration saved")
+            print("no experiment configuration saved")
             return
-
+        
         with open(os.path.join(self.exp_dir, "exp_config.json")) as file:
             retireved_params = json.load(file)
 
@@ -1382,10 +1385,10 @@ def broadcast():
 
 
 def saved_exps():
-    global SAVE_PATH
+    global EXPERIMENT_DATA_PATH
     dirs = []
 
-    all = os.listdir(SAVE_PATH)
+    all = os.listdir(EXPERIMENT_DATA_PATH)
     for item in all:
         if not os.path.isfile(item):
             dirs += [item]
@@ -1459,6 +1462,7 @@ if __name__ == "__main__":
                 EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(
                     VIALS, command["payload"]["name"], False
                 )
+
                 redis_client.lpush(
                     "socketio_answer", json.dumps({"expt-started": None})
                 )
