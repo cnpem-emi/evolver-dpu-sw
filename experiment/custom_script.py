@@ -215,14 +215,19 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
             if average_OD > ODset and collecting_more_curves:
                 #print("\tIF 3")
                 time_in = -(np.log(lower_thresh[x]/average_OD) * VOLUME) / flow_rate[x]
-
+                pump_out = -(np.log(lower_thresh[x]/average_OD) * VOLUME) / flow_rate[x + 32]
+                
                 if time_in > 20:
                     time_in = 20
 
-                time_in = round(time_in, 2)
+                if pump_out > 20:
+                    pump_out = 20
 
-                file_name =  "vial{0}_pump_log.txt".format(x)
-                file_path = os.path.join(eVOLVER.exp_dir, 'pump_log', file_name)
+                time_in = round(time_in, 2)
+                pump_out = round(pump_out, 2)
+
+                file_name =  "vial{0}_pump_in_log.txt".format(x)
+                file_path = os.path.join(eVOLVER.exp_dir, 'pump_in_log', file_name)
                 
                 data = np.genfromtxt(file_path, delimiter=',')
                 last_pump = data[len(data)-1][0]
@@ -234,13 +239,20 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
                     # influx pump ('A')
                     MESSAGE[x] = str(time_in)
                     # efflux pump ('C)
-                    MESSAGE[x + 32] = str(time_in + time_out)
+                    MESSAGE[x + 32] = str(pump_out + time_out)
 
-                    file_name =  "vial{0}_pump_log.txt".format(x)
-                    file_path = os.path.join(eVOLVER.exp_dir, 'pump_log', file_name)
+                    file_name =  "vial{0}_pump_in_log.txt".format(x)
+                    file_path = os.path.join(eVOLVER.exp_dir, 'pump_in_log', file_name)
 
                     text_file = open(file_path, "a+")
                     text_file.write("{0},{1}\n".format(elapsed_time, time_in))
+                    text_file.close()
+
+                    file_name =  "vial{0}_pump_out_log.txt".format(x)
+                    file_path = os.path.join(eVOLVER.exp_dir, 'pump_out_log', file_name)
+
+                    text_file = open(file_path, "a+")
+                    text_file.write("{0},{1}\n".format(elapsed_time, pump_out))
                     text_file.close()
         else:
             logger.debug('not enough OD measurements for vial %d' % x)

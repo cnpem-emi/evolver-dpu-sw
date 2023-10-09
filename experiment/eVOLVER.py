@@ -84,6 +84,7 @@ class EvolverDPU:
     exp_name = None
     exp_dir = None
     operation_mode = None
+    active_vials = []
 
     start_time = 0
     use_blank = False
@@ -130,9 +131,7 @@ class EvolverDPU:
         This method converts raw data into real values and ask for new step from custom functions.
         """
 
-        #print("\nBroadcast received")
-        #elapsed_time = round((time.time() - self.start_time) / 3600, 4)
-        #print("Elapsed time: %.4f hours" % elapsed_time)
+        print("\nBroadcast received", data)
 
         # Check if calibration files are available
         if not self.check_for_calibrations():
@@ -149,9 +148,9 @@ class EvolverDPU:
         data = self.transform_data(data, VIALS, od_cal, temp_cal)
         if data is None:
             return
-        #print("DATA: ", data)
 
         # Should we "blank" the OD?
+        '''
         if self.use_blank and self.OD_initial is None:
             logger.info("setting initial OD reading")
             self.OD_initial = np.array(data["transformed"]["od"])
@@ -160,8 +159,9 @@ class EvolverDPU:
             self.OD_initial = np.zeros(len(VIALS))
 
         data["transformed"]["od"] = list(np.array(data["transformed"]["od"]) - self.OD_initial)
-        print("OD: ", data["transformed"]["od"][:8])
-        print("Temp: ", data["transformed"]["temp"][:8])
+        '''
+        print("OD: ", data["transformed"]["od"])
+        print("Temp: ", data["transformed"]["temp"])
         print()
 
         if data is None:
@@ -205,7 +205,7 @@ class EvolverDPU:
             return
 
         # Run custom functions
-        self.custom_functions(data, VIALS, elapsed_time)
+        self.custom_functions(data, self.active_vials, elapsed_time)
 
         # save variables
         self.save_variables(self.start_time, self.OD_initial)
@@ -239,7 +239,7 @@ class EvolverDPU:
 
         # if od_cal['type'] == THREE_DIMENSION:
         # od_data_2 = data['data'].get(od_cal['params'][1], None)
-
+        #print("od_cal", od_cal)
         od_data = data["data"].get(od_cal["params"][0], None)
         temp_data = data["data"].get(temp_cal["params"][0], None)
 
@@ -249,6 +249,7 @@ class EvolverDPU:
         set_temp_data = data["config"].get("temp", {}).get("value", None)
 
         if od_data is None or temp_data is None or set_temp_data is None:
+            print(od_data,temp_data,set_temp_data)
             print("Incomplete data recieved, Error with measurement")
             logger.error("Incomplete data received, error with measurements")
             return None
@@ -431,7 +432,7 @@ class EvolverDPU:
 
             try:
                 func = getattr(custom_script, mode)
-                func(self, data, vials, elapsed_time)
+                func(self, data, self.active_vials, elapsed_time)
 
             except AttributeError:
                 logger.error("could not find function %s in custom_script.py" % mode)
@@ -451,8 +452,8 @@ class EvolverDPU:
 
     """ Experiment Related"""
 
-    def config_exp(self, vials, experiment_params, quiet, verbose, always_yes=False):
-        logger.info("initializing config")
+    def config_exp(self, experiment_params, quiet, verbose, always_yes=False):
+        logger.info("initializing config\n")
         print("initializing config")
         # os.path.join(exp_dir, 'evolver.log')
 
@@ -465,6 +466,8 @@ class EvolverDPU:
         # self.exp_dir = os.path.join(SAVE_PATH, self.exp_name)
         self.exp_dir = os.path.join(EXPERIMENT_DATA_PATH, self.exp_name)
         self.operation_mode = experiment_params["function"]
+        self.active_vials = [i["vial"] for i in experiment_params["vial_configuration"]]
+        print(self.active_vials)
 
         if os.path.exists(self.exp_dir):
             setup_logging(os.path.join(self.exp_dir, "evolver.log"), quiet, verbose)
@@ -494,6 +497,7 @@ class EvolverDPU:
             self.operation_mode = retireved_params["operation_mode"]
             self.use_blank = retireved_params["use_blank"]
             self.OD_initial = retireved_params["OD_initial"]
+            self.active_vials = retireved_params["active_vials"]
             self.experiment_params = retireved_params["experiment_params"]
 
         else:
@@ -529,10 +533,11 @@ class EvolverDPU:
                             "operation_mode": self.operation_mode,
                             "use_blank": self.use_blank,
                             "OD_initial": str(self.OD_initial),
+                            "active_vials": self.active_vials,
                             "experiment_params": self.experiment_params,
                         }
                     ),
-                    file,
+                    file, indent = 4
                 )
 
             os.makedirs(os.path.join(self.exp_dir, "OD"))
@@ -544,11 +549,12 @@ class EvolverDPU:
             os.makedirs(os.path.join(self.exp_dir, "temp_raw"))
             os.makedirs(os.path.join(self.exp_dir, "temp_config"))
 
-            os.makedirs(os.path.join(self.exp_dir, "pump_log"))
+            os.makedirs(os.path.join(self.exp_dir, "pump_out_log"))
+            os.makedirs(os.path.join(self.exp_dir, "pump_in_log"))
             os.makedirs(os.path.join(self.exp_dir, "chemo_config"))
             setup_logging(os.path.join(self.exp_dir, "evolver.log"), quiet, verbose)
 
-            for x in vials:
+            for x in self.active_vials:
                 exp_str = "Experiment: {0} vial {1}, {2}".format(
                     self.exp_name, x, time.strftime("%c")
                 )
@@ -567,7 +573,8 @@ class EvolverDPU:
                 )
 
                 # make pump log file
-                self._create_file(x, "pump_log", defaults=[exp_str, "0,0"])
+                self._create_file(x, "pump_in_log", defaults=[exp_str, "0,0"])
+                self._create_file(x, "pump_out_log", defaults=[exp_str, "0,0"])
 
                 # make ODset file
                 self._create_file(x, "ODset", defaults=[exp_str, "0,0"])
@@ -587,7 +594,7 @@ class EvolverDPU:
 
         return True
 
-    def initialize_exp(self, vials, exp_name, always_yes=False):
+    def initialize_exp(self, exp_name, always_yes=False):
         logger.info("initializing experiment")
         print("initializing experiment")
 
@@ -607,6 +614,7 @@ class EvolverDPU:
         self.use_blank = retireved_params["use_blank"]
         self.OD_initial = np.array(retireved_params["OD_initial"])
         self.experiment_params = retireved_params["experiment_params"]
+        self.active_vials = retireved_params["active_vials"]
 
         start_time = time.time()
         self.request_calibrations()
@@ -629,7 +637,7 @@ class EvolverDPU:
                     (temp_values[x] - temp_coefficients[x][1]) / temp_coefficients[x][0]
                 )
             )
-            for x in vials
+            for x in self.active_vials
         ]
 
         self.update_temperature(raw_temperatures)
@@ -642,7 +650,7 @@ class EvolverDPU:
             logger.info("will use initial OD measurement as blank")
         else:
             self.use_blank = False
-            self.OD_initial = np.zeros(len(vials))
+            self.OD_initial = np.zeros(len(self.active_vials))
 
         # copy current custom script to txt file
         backup_filename = "{0}_{1}.txt".format(
@@ -1450,7 +1458,7 @@ if __name__ == "__main__":
             if command["command"] == "expt-config":
                 experiment_params = command["payload"]
                 config = EVOLVER_NS.config_exp(
-                    VIALS, experiment_params, 0, False, False
+                    experiment_params, 0, False, False
                 )
 
                 if config:
@@ -1460,7 +1468,7 @@ if __name__ == "__main__":
 
             elif command["command"] == "expt-start":
                 EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(
-                    VIALS, command["payload"]["name"], False
+                    command["payload"]["name"], False
                 )
 
                 redis_client.lpush(
