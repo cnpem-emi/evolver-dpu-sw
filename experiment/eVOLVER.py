@@ -288,10 +288,10 @@ class EvolverDPU:
 
                     if not np.isfinite(od_data[x]):
                         od_value[x] = np.nan
-                        logger.debug("OD from vial %d: %s" % (x, od_value[x]))
+                        logger.debug("OD from vial %d: %s" % (x+1, od_value[x]))
 
                     else:
-                        logger.debug("OD from vial %d: %.3f" % (x, od_value[x]))
+                        logger.debug("OD from vial %d: %.3f" % (x+1, od_value[x]))
 
                 elif od_cal["type"] == THREE_DIMENSION:
                     od_value[x] = np.real(
@@ -328,7 +328,7 @@ class EvolverDPU:
             temps = []
 
             for x in vials:
-                file_name = "vial{0}_temp_config.txt".format(x)
+                file_name = "vial{0}_temp_config.txt".format(x+1)
                 file_path = os.path.join(self.exp_dir, "temp_config", file_name)
 
                 temp_set_data = np.genfromtxt(file_path, delimiter=",")
@@ -341,13 +341,13 @@ class EvolverDPU:
                         float(set_temp_data[x]) * temp_coefficients[0]
                     ) + temp_coefficients[1]
                     logger.debug(
-                        "set_temperature from vial %d: %.3f" % (x, set_temp_data[x])
+                        "set_temperature from vial %d: %.3f" % (x+1, set_temp_data[x])
                     )
 
                 except ValueError:
                     print("Set Temp Read Error")
                     logger.error(
-                        "set temperature read error for vial %d, setting to NaN" % x
+                        "set temperature read error for vial %d, setting to NaN" % x+1
                     )
                     set_temp_data[x] = "NaN"
 
@@ -399,7 +399,7 @@ class EvolverDPU:
             return
 
         for x in vials:
-            file_name = "vial{0}_{1}.txt".format(x, parameter)
+            file_name = "vial{0}_{1}.txt".format(x+1, parameter)
             file_path = os.path.join(self.exp_dir, parameter, file_name)
             text_file = open(file_path, "a+")
             text_file.write("{0},{1}\n".format(elapsed_time, data[x]))
@@ -556,37 +556,37 @@ class EvolverDPU:
 
             for x in self.active_vials:
                 exp_str = "Experiment: {0} vial {1}, {2}".format(
-                    self.exp_name, x, time.strftime("%c")
+                    self.exp_name, x+1, time.strftime("%c")
                 )
 
                 # make OD file
-                self._create_file(x, "OD", defaults=[exp_str])
-                self._create_file(x, "od_135_raw")
+                self._create_file(x+1, "OD", defaults=[exp_str])
+                self._create_file(x+1, "od_135_raw")
 
                 # make temperature data file
-                self._create_file(x, "temp")
-                self._create_file(x, "temp_raw")
+                self._create_file(x+1, "temp")
+                self._create_file(x+1, "temp_raw")
 
                 # make temperature configuration file
                 self._create_file(
-                    x, "temp_config", defaults=[exp_str, "0,{0}".format(TEMP[x])]
+                    x+1, "temp_config", defaults=[exp_str, "0,{0}".format(TEMP[x])]
                 )
 
                 # make pump log file
-                self._create_file(x, "pump_in_log", defaults=[exp_str, "0,0"])
-                self._create_file(x, "pump_out_log", defaults=[exp_str, "0,0"])
+                self._create_file(x+1, "pump_in_log", defaults=[exp_str, "0,0"])
+                self._create_file(x+1, "pump_out_log", defaults=[exp_str, "0,0"])
 
                 # make ODset file
-                self._create_file(x, "ODset", defaults=[exp_str, "0,0"])
+                self._create_file(x+1, "ODset", defaults=[exp_str, "0,0"])
 
                 # make growth rate file
                 self._create_file(
-                    x, "gr", defaults=[exp_str, "0,0"], directory="growthrate"
+                    x+1, "gr", defaults=[exp_str, "0,0"], directory="growthrate"
                 )
 
                 # make chemostat file
                 self._create_file(
-                    x,
+                    x+1,
                     "chemo_config",
                     defaults=["0,0,0", "0,0,0"],
                     directory="chemo_config",
@@ -963,9 +963,9 @@ class EvolverDPU:
                             os.makedirs(os.path.join(self.exp_dir, param + "_raw"))
                             for x in range(len(fit["coefficients"])):
                                 exp_str = "Experiment: {0} vial {1}, {2}".format(
-                                    self.exp_name, x, time.strftime("%c")
+                                    self.exp_name, x+1, time.strftime("%c")
                                 )
-                                self._create_file(x, param + "_raw", defaults=[exp_str])
+                                self._create_file(x+1, param + "_raw", defaults=[exp_str])
                     break
 
     # ----- [BEGGINING] Custom functions -----
@@ -1204,9 +1204,9 @@ class EvolverDPU:
                             os.makedirs(os.path.join(self.exp_dir, param + "_raw"))
                             for x in range(len(fit["coefficients"])):
                                 exp_str = "Experiment: {0} vial {1}, {2}".format(
-                                    self.exp_name, x, time.strftime("%c")
+                                    self.exp_name, x+1, time.strftime("%c")
                                 )
-                                self._create_file(x, param + "_raw", defaults=[exp_str])
+                                self._create_file(x+1, param + "_raw", defaults=[exp_str])
                     break
 
     def request_calibrations(self) -> dict:
