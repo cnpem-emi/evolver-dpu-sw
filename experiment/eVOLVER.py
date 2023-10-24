@@ -145,7 +145,10 @@ class EvolverDPU:
             temp_cal = json.load(f)
 
         # Apply calibrations and update temperatures if needed
+        vials = self.active_vials if self.exp_status else VIALS
+        print('aqui',vials)
         data = self.transform_data(data, VIALS, od_cal, temp_cal)
+
         if data is None:
             return
 
@@ -249,7 +252,6 @@ class EvolverDPU:
         set_temp_data = data["config"].get("temp", {}).get("value", None)
 
         if od_data is None or temp_data is None or set_temp_data is None:
-            print(od_data,temp_data,set_temp_data)
             print("Incomplete data recieved, Error with measurement")
             logger.error("Incomplete data received, error with measurements")
             return None
@@ -331,8 +333,9 @@ class EvolverDPU:
                 file_name = "vial{0}_temp_config.txt".format(x+1)
                 file_path = os.path.join(self.exp_dir, "temp_config", file_name)
 
-                temp_set_data = np.genfromtxt(file_path, delimiter=",")
-                temp_set = temp_set_data[len(temp_set_data) - 1][1]
+                #temp_set_data = np.genfromtxt(file_path, delimiter=",")
+                #temp_set = temp_set_data[len(temp_set_data) - 1][1]
+                temp_set = set_temp_data[x]
                 temps.append(temp_set)
 
                 # Try to apply calibration to temperature (setpoint)
@@ -361,7 +364,7 @@ class EvolverDPU:
                 coefficients = temp_cal["coefficients"]
                 raw_temperatures = [0] * 16
 
-                for x in vials:
+                for x in self.active_vials:
                     # index = channelIdx[str(x)]["channel"]
                     raw_temperatures[x] = str(
                         int(
@@ -634,10 +637,10 @@ class EvolverDPU:
         raw_temperatures = [
             str(
                 int(
-                    (temp_values[x] - temp_coefficients[x][1]) / temp_coefficients[x][0]
+                    (temp_values[i] - temp_coefficients[x][1]) / temp_coefficients[x][0]
                 )
             )
-            for x in self.active_vials
+            for i,x in enumerate(self.active_vials)
         ]
 
         self.update_temperature(raw_temperatures)
@@ -1338,18 +1341,18 @@ class EvolverDPU:
 
     def stop_some_vials(self, vials: list):
         pump = ["--" for i in range(48)]
-        # temp = ['NaN' for i in range(16)]
-        # stir = ['nan' for i in range(16)]
+        temp = ['nan' for i in range(16)]
+        stir = ['nan' for i in range(16)]
 
         for vial in vials:
             pump[vial] = 0
             pump[vial + 16] = 0
             pump[vial + 32] = 0
-            # stir[vial] = 0
-            # temp[vial] = 4095
+            stir[vial] = 0
+            temp[vial] = 4095
 
-        # self.update_temperature(temp)
-        # self.update_stir_rate(stir)
+        self.update_temperature(temp)
+        self.update_stir_rate(stir)
         self.fluid_command(pump)
 
     def stop_exp(self):
@@ -1476,10 +1479,10 @@ if __name__ == "__main__":
                 )
 
             elif command["command"] == "expt-stop":
-                #if len(command["payload"]["vials"]) == 16:
-                EVOLVER_NS.stop_exp()
-                #else:
-                #    EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
+                if len(command["payload"]["vials"]) == 16:
+                    EVOLVER_NS.stop_exp()
+                else:
+                    EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
 
                 redis_client.lpush(
                     "socketio_answer", json.dumps({"expt-stopped": None})

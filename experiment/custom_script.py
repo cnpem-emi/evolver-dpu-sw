@@ -49,7 +49,6 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
     #OD_data = input_data['transformed']['od']
 
     if eVOLVER.experiment_params is not None:
-        print(eVOLVER.experiment_params)
         rate_config = list(map(lambda x: x['rate'], eVOLVER.experiment_params['vial_configuration']))
         stir = list(map(lambda x: x['stir'], eVOLVER.experiment_params['vial_configuration']))
         start_time= list(map(lambda x: x['starttime'], eVOLVER.experiment_params['vial_configuration']))
@@ -68,7 +67,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
 
     ##### Chemostat Control Code Below #####
 
-    for x in chemostat_vials: #main loop through each vial
+    for k,x in enumerate(chemostat_vials): #main loop through each vial
         # Update chemostat configuration files for each vial
 
         #initialize OD and find OD path
@@ -94,15 +93,15 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
 
 
             # once start time has passed and culture hits start OD, if no command has been written, write new chemostat command to file
-            if ((elapsed_time > start_time[x])): # and (average_OD > start_OD[x])):
+            if ((elapsed_time > start_time[k])): # and (average_OD > start_OD[k])):
 
                 #calculate time needed to pump bolus for each pump
                 bolus_in_s[x] = bolus/flow_rate[x]
 
                 # calculate the period (i.e. frequency of dilution events) based on user specified growth rate and bolus size
-                if rate_config[x] > 0:
+                if rate_config[k] > 0:
 #                    period_config[x] = (3600*bolus)/((rate_config[x])*VOLUME) #scale dilution rate by bolus size and volume
-                    period_config[x] = rate_config[x] #scale dilution rate by bolus size and volume
+                    period_config[x] = rate_config[k] #scale dilution rate by bolus size and volume
                 else: # if no dilutions needed, then just loops with no dilutions
                     period_config[x] = 0
 
@@ -160,7 +159,7 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
     # fluidic message: initialized so that no change is sent
     MESSAGE = ['--'] * 48
 
-    for x in vials: #main loop through each vial
+    for k,x in enumerate(vials): #main loop through each vial
         # Update turbidostat configuration files for each vial
         # initialize OD and find OD path
 
@@ -193,29 +192,31 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
             #print(average_OD)
             #if recently exceeded upper threshold, note end of growth curve in ODset, 
             # allow dilutions to occur and growthrate to be measured
-            if (average_OD > upper_thresh[x]) and (ODset != lower_thresh[x]):
+            print(upper_thresh, lower_thresh)
+            if (average_OD > upper_thresh[k]) and (ODset != lower_thresh[k]):
                 #print("\tIF 1")
                 text_file = open(ODset_path, "a+")
-                text_file.write("{0},{1}\n".format(elapsed_time, lower_thresh[x]))
+                text_file.write("{0},{1}\n".format(elapsed_time, lower_thresh[k]))
                 text_file.close()
-                ODset = lower_thresh[x]
+                ODset = lower_thresh[k]
 
                 # calculate growth rate
                 eVOLVER.calc_growth_rate(x+1, ODsettime, elapsed_time)
 
             #if have approx. reached lower threshold, note start of growth curve in ODset
-            if (average_OD < (lower_thresh[x] + (upper_thresh[x] - lower_thresh[x])/3)) and (ODset != upper_thresh[x]):
+            if (average_OD < (lower_thresh[k] + (upper_thresh[k] - lower_thresh[k])/3)) and (ODset != upper_thresh[k]):
                 #print("\tIF 2")
                 text_file = open(ODset_path, "a+")
-                text_file.write("{0},{1}\n".format(elapsed_time, upper_thresh[x]))
+                text_file.write("{0},{1}\n".format(elapsed_time, upper_thresh[k]))
                 text_file.close()
-                ODset = upper_thresh[x]
+                ODset = upper_thresh[k]
 
             #if need to dilute to lower threshold, then calculate amount of time to pump
+            
             if average_OD > ODset and collecting_more_curves:
                 #print("\tIF 3")
-                time_in = -(np.log(lower_thresh[x]/average_OD) * VOLUME) / flow_rate[x]
-                pump_out = -(np.log(lower_thresh[x]/average_OD) * VOLUME) / flow_rate[x + 32]
+                time_in = -(np.log(lower_thresh[k]/average_OD) * VOLUME) / flow_rate[x]
+                pump_out = -(np.log(lower_thresh[k]/average_OD) * VOLUME) / flow_rate[x + 32]
                 
                 if time_in > 20:
                     time_in = 20
