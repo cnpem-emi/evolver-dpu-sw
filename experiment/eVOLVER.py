@@ -146,7 +146,6 @@ class EvolverDPU:
 
         # Apply calibrations and update temperatures if needed
         vials = self.active_vials if self.exp_status else VIALS
-        print('aqui',vials)
         data = self.transform_data(data, VIALS, od_cal, temp_cal)
 
         if data is None:
@@ -256,7 +255,7 @@ class EvolverDPU:
             logger.error("Incomplete data received, error with measurements")
             return None
 
-        if "NaN" in od_data or "NaN" in temp_data or "NaN" in set_temp_data:
+        if "nan" in od_data or "nan" in temp_data or "nan" in set_temp_data:
             print("NaN recieved, Error with measurement")
             logger.error("NaN received, error with measurements")
             return None
@@ -324,7 +323,7 @@ class EvolverDPU:
             except ValueError:
                 print("Temp Read Error")
                 logger.error("temperature read error for vial %d, setting to NaN" % x)
-                temp_value[x] = "NaN"
+                temp_value[x] = "nan"
 
         if self.exp_dir is not None:
             temps = []
@@ -337,6 +336,7 @@ class EvolverDPU:
                 #temp_set = temp_set_data[len(temp_set_data) - 1][1]
                 temp_set = set_temp_data[x]
                 temps.append(temp_set)
+
 
                 # Try to apply calibration to temperature (setpoint)
                 try:
@@ -352,7 +352,7 @@ class EvolverDPU:
                     logger.error(
                         "set temperature read error for vial %d, setting to NaN" % x+1
                     )
-                    set_temp_data[x] = "NaN"
+                    set_temp_data[x] = "nan"
 
             # update temperatures only if difference with expected
             # value is above 0.2 degrees celsius
@@ -372,6 +372,7 @@ class EvolverDPU:
                             / temp_cal["coefficients"][x][0]
                         )
                     )
+
                 self.update_temperature(raw_temperatures)
 
             else:
@@ -634,17 +635,26 @@ class EvolverDPU:
             temp_cal = json.load(f)
             temp_coefficients = temp_cal["coefficients"]
 
-        raw_temperatures = [
+        stir = ['nan'] * 16
+        temp = ['nan'] * 16
+
+        for k,x in enumerate(self.active_vials):
+            stir[x] = stir_rate[k]
+            temp[x] = str(int((temp_values[k] - temp_coefficients[x][1]) / temp_coefficients[x][0]))
+        
+        '''raw_temperatures = [
             str(
                 int(
                     (temp_values[i] - temp_coefficients[x][1]) / temp_coefficients[x][0]
                 )
             )
             for i,x in enumerate(self.active_vials)
-        ]
+        ]'''
 
-        self.update_temperature(raw_temperatures)
-        self.update_stir_rate(stir_rate)
+        
+
+        self.update_temperature(temp)
+        self.update_stir_rate(stir)
 
         exp_blank = "y" if always_yes else "n"
 
@@ -902,6 +912,7 @@ class EvolverDPU:
         """
         Update temperature values. Values in list should be raw values 0-4095
         """
+
         data = {
             "param": "temp",
             "value": temperatures,

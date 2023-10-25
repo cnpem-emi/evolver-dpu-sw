@@ -192,7 +192,6 @@ def turbidostat(eVOLVER, input_data, vials, elapsed_time):
             #print(average_OD)
             #if recently exceeded upper threshold, note end of growth curve in ODset, 
             # allow dilutions to occur and growthrate to be measured
-            print(upper_thresh, lower_thresh)
             if (average_OD > upper_thresh[k]) and (ODset != lower_thresh[k]):
                 #print("\tIF 1")
                 text_file = open(ODset_path, "a+")
