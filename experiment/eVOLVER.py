@@ -1490,10 +1490,10 @@ if __name__ == "__main__":
                 )
 
             elif command["command"] == "expt-stop":
-                if len(command["payload"]["vials"]) == 16:
-                    EVOLVER_NS.stop_exp()
-                else:
+                if "vials" in command["payload"].keys():
                     EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
+                else:
+                    EVOLVER_NS.stop_exp()
 
                 redis_client.lpush(
                     "socketio_answer", json.dumps({"expt-stopped": None})

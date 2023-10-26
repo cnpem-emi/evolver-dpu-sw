@@ -33,19 +33,19 @@ VOLUME =  20 #45 # mL - Total vial volume
 def chemostat(eVOLVER, input_data, vials, elapsed_time):
     
     ##### USER DEFINED VARIABLES #####
-    start_OD = [0] * 16 # ~OD600, set to 0 to start chemostate dilutions at any positive OD
-    start_time = [0.01] * 16 # hours, set 0 to start immediately
+    #start_OD = [0] * 16 # ~OD600, set to 0 to start chemostate dilutions at any positive OD
+    #start_time = [0.01] * 16 # hours, set 0 to start immediately
 
     OD_values_to_average = 6  # Number of values to calculate the OD average
 
-    chemostat_vials = vials # vials is all 16, can set to different range (ex. [0,1,2,3]) to only trigger tstat on those vials
+    #chemostat_vials = vials # vials is all 16, can set to different range (ex. [0,1,2,3]) to only trigger tstat on those vials
 
-    rate_config = [10] * 16 # seconds - period for pump actuation
+    #rate_config = [10] * 16 # seconds - period for pump actuation
     
     ##### END OF USER DEFINED VARIABLES #####
 
 
-    stir = STIR 
+    #stir = STIR 
     #OD_data = input_data['transformed']['od']
 
     if eVOLVER.experiment_params is not None:
@@ -67,7 +67,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
 
     ##### Chemostat Control Code Below #####
 
-    for k,x in enumerate(chemostat_vials): #main loop through each vial
+    for k,x in enumerate(vials): #main loop through each vial
         # Update chemostat configuration files for each vial
 
         #initialize OD and find OD path
@@ -120,7 +120,7 @@ def chemostat(eVOLVER, input_data, vials, elapsed_time):
             logger.debug('not enough OD measurements for vial %d' % (x+1))
 
     # your_function_here() #good spot to call non-feedback functions for dynamic temperature, stirring, etc.
-    eVOLVER.update_chemo(input_data, chemostat_vials, bolus_in_s, period_config) #compares computed chemostat config to the remote one
+    eVOLVER.update_chemo(input_data, vials, bolus_in_s, period_config) #compares computed chemostat config to the remote one
     # end of chemostat() fxn
 
 
