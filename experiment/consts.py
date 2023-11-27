@@ -1,19 +1,23 @@
 functions = {
-    "command": {"id": 1},
-    "getlastcommands": {"id": 2},
-    "getcalibrationnames": {"id": 3},
-    "getfitnames": {"id": 4},
-    "getcalibration": {"id": 5},
-    "setrawcalibration": {"id": 6},
-    "setfitcalibrations": {"id": 7},
-    "setactiveodcal": {"id": 8},
-    "getactivecal": {"id": 9},
-    "getdevicename": {"id": 10},
-    "setdevicename": {"id": 11},
-    "run_commands": {"id": 12},
-    "get_num_commands": {"id": 13},
-    "sub_command": {"id": 14},
-    "appendcal": {"id": 15},
-    "getupdateinterval": {"id": 16},
-    "getallcalibrations": {"id": 17},
-    }
+    "get_active_calibrations": {"id": 1},
+    "get_active_experiments": {"id": 2},
+    "get_exp_config": {"id": 3},
+    "start_new_experiment": {"id": 4},
+    "stop_experiment": {"id": 5},
+    "get_device_name": {"id": 6},
+    "get_calibration_names": {"id": 7},
+    "get_specific_calibrations": {"id": 8},
+    "get_all_calibrations": {"id": 9},
+    "append_calibration": {"id": 10},
+    "activate_calibrations": {"id": 11},
+    "set_active_calibration": {"id": 12},
+    # print_calibration_file_error(self):
+    "command": {"id": 13},
+    "get_num_commands": {"id": 14}
+    # clear_broadcast
+    # serial_communication
+    # run_commands
+    # process_commands
+    # sub_command
+    # broadcast
+}

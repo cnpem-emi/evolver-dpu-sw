@@ -13,6 +13,7 @@ import sys
 import time
 import traceback
 from threading import Lock, Thread
+import time
 
 import numpy as np
 import redis
@@ -80,22 +81,37 @@ class EvolverDPU:
     global channelIdx
     global lock
 
-    exp_status = False
-    exp_name = None
-    exp_dir = None
-    operation_mode = None
-    active_vials = []
-
-    start_time = 0
-    use_blank = False
-    OD_initial = None
-    experiment_params = None
     ip_address = None
+    start_time = [None] * 16
+
+    od_cals = [None] * 16
+    temp_cal = None
+    pump_cal = None
+    active_cals = [None] * 16
+
+    exps_ocurring = []
+    active_exp = [None] * 16
+    exp_configs = [None] * 16
+    
 
     """ Inicializando DPU """
 
     def __init__(self):
         self.connect()
+
+        """###
+        lock.acquire()
+        self.s.send(functions["get_active_calibrations"]["id"].to_bytes(1, "big") + b"\r\n"        )
+        time.sleep(0.1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+            else:
+                time.sleep(1)
+        lock.release()
+        self.active_cal = json.loads(info)"""
 
     def connect(self):
         """
@@ -121,8 +137,8 @@ class EvolverDPU:
 
         logger.info("disconnected to eVOLVER as client")
 
-    """ Broadcast and broadcast-related """
 
+    """ Broadcast and broadcast-related """
     def broadcast(self, data: dict):
         """
         This method should be called every time a new broadcast is received from evolver-server
@@ -132,9 +148,160 @@ class EvolverDPU:
         """
 
         print("\nBroadcast received", data)
+        if self.ip_address is None or data["ip"] != self.ip_address:
+            self.ip_address = data["ip"]
 
-        # Check if calibration files are available
-        if not self.check_for_calibrations():
+        if '0' in data["config"]["od_led"]['value']:
+            turn_leds_on = 1
+
+        # Check if temp and pump cal are set
+        for vial in VIALS:
+            # raw_temp = ['--'] * 16
+            if self.active_exp[vial] is not None:
+
+                elapsed_time = round((time.time() - self.start_time) / 3600, 4)
+                self.save_data(vial, [data["od_135"][vial], data["temp"][vial]], elapsed_time, False)
+                    
+                try:
+                    transformed_data = self.transform_data(data["data"], data["config"]["temp"]["value"][vial], vial)
+                    # raw_temp[vial] = transformed_data[2]
+                    self.save_data(vial, transformed_data, elapsed_time, True)
+                
+                except OSError:
+                    logger.info("Problem with calibration")
+                    return
+                    
+        self.custom_functions(elapsed_time)
+
+        broadcasting_data = {
+            "ip": self.ip_address,
+            "timestamp": data['timestamp'],
+            "data": data['data'],
+            "active_exp": self.active_exp,
+            "od_cal": self.od_cals,
+            "temp_cal": self.temp_cal,
+            "pump_cal": self.pump_cal
+        }
+
+        # Restart logging for db/gdrive syncing
+        logging.shutdown()
+        logging.getLogger("eVOLVER")
+
+        return broadcasting_data
+
+
+    def transform_data(self, data, setpoint, vial):
+        raw_od = float(data["od_135"][vial])
+        raw_temp = float(data["temp"][vial])
+        setpoint = float(setpoint)
+
+        od_coeff = self.active_cals[vial]["od_135"]
+        temp_coeff = self.active_cals[vial]["temp"]
+
+        # Try to apply calibration to od_135
+        try: 
+            od_value = od_coeff[2] - (np.log10(
+                                        (od_coeff[1] - od_coeff[0])/(raw_od - od_coeff[0]) - 1)
+                                        / od_coeff[3]
+                                    )
+            
+            if not np.isfinite(od_value):
+                od_value = np.nan
+                logger.debug("OD from vial %d: %s" % (x+1, od_value[x]))
+
+            else:
+                logger.debug("OD from vial %d: %.3f" % (x+1, od_value[x]))
+
+        except ValueError:
+                print("OD Read Error")
+                logger.error("OD read error for vial %d, setting to NaN" % x)
+                od_value = np.nan
+
+        # Try to apply calibration to temperature (read)
+        try:
+            temp_value = (raw_temp * temp_coeff[0]) + temp_coeff[1]
+            print('temperature from vial %d: %.3f' % (x, temp_value[x]))
+
+        except ValueError:
+                print("Temp Read Error")
+                logger.error("temperature read error for vial %d, setting to NaN" % x)
+                temp_value = np.nan
+
+        '''exp_dir = os.path.join(EXPERIMENT_DATA_PATH, self.active_exp[vial])
+        file_name = "vial{}_temp_config.txt".format(vial+1)
+        file_path = os.path.join(self.exp_dir, "temp_config", file_name)
+
+        temp_set_data = np.genfromtxt(file_path, delimiter=",")
+        temp_set = temp_set_data[len(temp_set_data) - 1][1]
+        ''' 
+        # Try to apply calibration to temperature (setpoint)
+        try:
+            setpoint_value = (setpoint * temp_coeff[0]) + temp_coeff[1]
+        except ValueError:
+            print("Set Temp Read Error")
+            setpoint = "nan"
+
+        '''# update temperatures only if difference with expected
+        # value is above 0.2 degrees celsius
+        delta_t = np.abs(setpoint_value - temp_set)
+
+        if delta_t < 0.2:
+            logger.info("updating temperatures (max. deltaT is %.2f)" % delta_t)
+            raw_set = str(int((temp_set - temp_coeff[1]) / temp_coeff[0]))'''
+
+        return od_value, temp_value, setpoint_value
+    
+
+    def save_data(self, vial: int, data: list, elapsed_time: float, is_transformed: bool):
+        """
+        Save a variable into text file, each smart sleeve has its own file!
+        """
+        if is_transformed:
+            parameters = ['OD', "temp", "temp_config"]
+        else:
+            parameters = ['od_135_raw', 'temp_raw']
+
+        for i,param in enumerate(parameters):
+            file_name = "vial{0}_{1}.txt".format(vial+1, param)
+            file_path = os.path.join(EXPERIMENT_DATA_PATH, self.active_exp[vial], param, file_name)
+            text_file = open(file_path, "a+")
+            text_file.write("{0},{1}\n".format(elapsed_time, data[i]))
+            text_file.close()
+
+
+    def custom_functions(self, elapsed_time: float):
+        """
+        Load user script from custom_script.py
+        Run scripts corresponding to requested operation using new received data
+        """
+
+        for experiment in self.exps_ocurring:
+            if experiment["mode"] == "turbidostat":
+                custom_script.turbidostat(self, experiment["vials"], elapsed_time)
+
+            elif experiment["mode"] == "chemostat":
+                custom_script.chemostat(self, experiment["vials"], elapsed_time)
+
+            elif experiment["mode"] == "growthcurve":
+                custom_script.growth_curve(self, experiment["vials"], elapsed_time)
+
+            else:
+                # try to load the user function
+                # if failing report to user
+                logger.info("user-defined operation mode %s" % experiment["mode"])
+
+                try:
+                    func = getattr(custom_script, experiment["mode"])
+                    func(self, experiment["mode"], experiment["vials"], elapsed_time)
+
+                except AttributeError:
+                    logger.error("could not find function %s in custom_script.py" % experiment["mode"])
+                    print("Could not find function %s in custom_script.py - Skipping user defined functions" % experiment["mode"])
+
+
+    """# Check if calibration coefficients are available
+            if self.active_cals
+            if not self.check_calibration(""):
             print("Calibration files still missing, skipping custom functions")
             return
 
@@ -214,14 +381,39 @@ class EvolverDPU:
 
         # Restart logging for db/gdrive syncing
         logging.shutdown()
-        logging.getLogger("eVOLVER")
+        logging.getLogger("eVOLVER")"""
+    #def set_temp_cal()
+    #def set_pump_cal()
+    #def get_cal_coefficients(vial, experiment_params["od_cal"]):
 
-    def check_for_calibrations(self):
+    
+    def check_calibration(self, name: str):
         """
         Check whether calibrations are available
         Returns a boolean.
         """
         result = True
+
+        # Retrieving all calibration names
+        lock.acquire()
+        self.s.send(functions["get_calibration_names"]["id"].to_bytes(1, "big") + b"\r\n")
+        time.sleep(0.1)
+
+        for _ in range(3):
+            ready = select.select([self.s], [], [], 2)
+            if ready[0]:
+                info = self.s.recv(30000)[:-2]
+            else:
+                time.sleep(1)
+        lock.release()
+
+        cal_names = json.loads(info)
+        print(cal_names)
+
+        if name not in cal_names:
+            result = False
+
+        '''self.active_cal = json.loads(info)
 
         if (
             not os.path.exists(OD_CAL_PATH)
@@ -231,219 +423,15 @@ class EvolverDPU:
             # log and request again
             logger.warning("Calibrations not received yet, requesting again")
             self.request_calibrations()
-            result = False
+            result = False'''
 
         return result
 
-    def transform_data(self, data, vials, od_cal, temp_cal):
-        od_data_2 = None
-        #print(od_cal)
+    
 
-        # if od_cal['type'] == THREE_DIMENSION:
-        # od_data_2 = data['data'].get(od_cal['params'][1], None)
-        #print("od_cal", od_cal)
-        od_data = data["data"].get(od_cal["params"][0], None)
-        temp_data = data["data"].get(temp_cal["params"][0], None)
+    
 
-        temp_value = [0] * 16
-        od_value = [0] * 16
-
-        set_temp_data = data["config"].get("temp", {}).get("value", None)
-
-        if od_data is None or temp_data is None or set_temp_data is None:
-            print("Incomplete data recieved, Error with measurement")
-            logger.error("Incomplete data received, error with measurements")
-            return None
-
-        if "nan" in od_data or "nan" in temp_data or "nan" in set_temp_data:
-            print("NaN recieved, Error with measurement")
-            logger.error("NaN received, error with measurements")
-            return None
-
-        od_data = np.array([float(x) for x in od_data])
-        if od_data_2:
-            od_data_2 = np.array([float(x) for x in od_data_2])
-
-        temp_data = np.array([float(x) for x in temp_data])
-        set_temp_data = np.array([float(x) for x in set_temp_data])
-
-        for x in vials:
-            od_coefficients = od_cal["coefficients"][x]
-            temp_coefficients = temp_cal["coefficients"][x]
-            index_value = x  # channelIdx[str(x)]["channel"]
-
-            # Try to apply calibration to OD
-            try:
-                if od_cal["type"] == SIGMOID:
-                    # convert raw photodiode data into ODdata using calibration curve
-                    od_value[x] = od_coefficients[2] - (
-                        (
-                            np.log10(
-                                (od_coefficients[1] - od_coefficients[0])
-                                / (float(od_data[index_value]) - od_coefficients[0])
-                                - 1
-                            )
-                        )
-                        / od_coefficients[3]
-                    )
-
-                    if not np.isfinite(od_data[x]):
-                        od_value[x] = np.nan
-                        logger.debug("OD from vial %d: %s" % (x+1, od_value[x]))
-
-                    else:
-                        logger.debug("OD from vial %d: %.3f" % (x+1, od_value[x]))
-
-                elif od_cal["type"] == THREE_DIMENSION:
-                    od_value[x] = np.real(
-                        od_coefficients[0]
-                        + (od_coefficients[1] * od_data[index_value])
-                        + (od_coefficients[2] * od_data_2[index_value])
-                        + (od_coefficients[3] * (od_data[index_value] ** 2))
-                        + (od_coefficients[4] * od_data[x] * od_data_2[index_value])
-                        + (od_coefficients[5] * (od_data_2[index_value] ** 2))
-                    )
-                else:
-                    logger.error("OD calibration not of supported type!")
-                    od_value[x] = np.nan
-
-            except ValueError:
-                print("OD Read Error")
-                logger.error("OD read error for vial %d, setting to NaN" % x)
-                od_value[x] = np.nan
-
-            # Try to apply calibration to temperature (read)
-            try:
-                # temp_value[x] =  [channelIdx[str(x)]["channel"]]
-                temp_value[x] = (
-                    float(temp_data[x]) * temp_coefficients[0]
-                ) + temp_coefficients[1]
-                # print('temperature from vial %d: %.3f' % (x, temp_value[x]))
-
-            except ValueError:
-                print("Temp Read Error")
-                logger.error("temperature read error for vial %d, setting to NaN" % x)
-                temp_value[x] = "nan"
-
-        if self.exp_dir is not None:
-            temps = []
-
-            for x in vials:
-                file_name = "vial{0}_temp_config.txt".format(x+1)
-                file_path = os.path.join(self.exp_dir, "temp_config", file_name)
-
-                #temp_set_data = np.genfromtxt(file_path, delimiter=",")
-                #temp_set = temp_set_data[len(temp_set_data) - 1][1]
-                temp_set = set_temp_data[x]
-                temps.append(temp_set)
-
-
-                # Try to apply calibration to temperature (setpoint)
-                try:
-                    set_temp_data[x] = (
-                        float(set_temp_data[x]) * temp_coefficients[0]
-                    ) + temp_coefficients[1]
-                    logger.debug(
-                        "set_temperature from vial %d: %.3f" % (x+1, set_temp_data[x])
-                    )
-
-                except ValueError:
-                    print("Set Temp Read Error")
-                    logger.error(
-                        "set temperature read error for vial %d, setting to NaN" % x+1
-                    )
-                    set_temp_data[x] = "nan"
-
-            # update temperatures only if difference with expected
-            # value is above 0.2 degrees celsius
-            temps = np.array(temps)
-            delta_t = np.abs(set_temp_data - temps).max()
-
-            if delta_t < 0.2:
-                logger.info("updating temperatures (max. deltaT is %.2f)" % delta_t)
-                coefficients = temp_cal["coefficients"]
-                raw_temperatures = [0] * 16
-
-                for x in self.active_vials:
-                    # index = channelIdx[str(x)]["channel"]
-                    raw_temperatures[x] = str(
-                        int(
-                            (temps[x] - temp_cal["coefficients"][x][1])
-                            / temp_cal["coefficients"][x][0]
-                        )
-                    )
-
-                self.update_temperature(raw_temperatures)
-
-            else:
-                # config from server agrees with local config
-                # report if actual temperature doesn't match
-                delta_t = np.abs(temps - temp_data).max()
-
-                if delta_t > 0.2:
-                    logger.debug(
-                        "actual temperature doesn't match configuration "
-                        "(yet? max deltaT is %.2f)" % delta_t
-                    )
-                    logger.debug("temperature config: %s" % temps)
-                    logger.debug("actual temperatures: %s" % temp_data)
-
-        # add a new field in the data dictionary
-        data["transformed"] = {}
-        data["transformed"]["od"] = od_value
-        data["transformed"]["temp"] = temp_value
-
-        return data
-
-    def save_data(self, data: list, elapsed_time: float, vials: list, parameter: str):
-        """
-        Save a variable into text file, each smart sleeve has its own file!
-        """
-        if len(data) == 0:
-            return
-
-        for x in vials:
-            file_name = "vial{0}_{1}.txt".format(x+1, parameter)
-            file_path = os.path.join(self.exp_dir, parameter, file_name)
-            text_file = open(file_path, "a+")
-            text_file.write("{0},{1}\n".format(elapsed_time, data[x]))
-            text_file.close()
-
-    def custom_functions(self, data: dict, vials: list, elapsed_time: float):
-        """
-        Load user script from custom_script.py
-        Run scripts corresponding to requested operation using new received data
-        """
-        mode = (
-            self.experiment_params["function"]
-            if self.experiment_params
-            else self.operation_mode
-        )
-
-        if mode == "turbidostat":
-            custom_script.turbidostat(self, data, vials, elapsed_time)
-
-        elif mode == "chemostat":
-            custom_script.chemostat(self, data, vials, elapsed_time)
-
-        elif mode == "growthcurve":
-            custom_script.growth_curve(self, data, vials, elapsed_time)
-
-        else:
-            # try to load the user function
-            # if failing report to user
-            logger.info("user-defined operation mode %s" % mode)
-
-            try:
-                func = getattr(custom_script, mode)
-                func(self, data, self.active_vials, elapsed_time)
-
-            except AttributeError:
-                logger.error("could not find function %s in custom_script.py" % mode)
-                print(
-                    "Could not find function %s in custom_script.py "
-                    "- Skipping user defined functions" % mode
-                )
+    
 
     def save_variables(self, start_time, OD_initial):
         # save variables needed for restarting experiment later
@@ -459,213 +447,154 @@ class EvolverDPU:
     def config_exp(self, experiment_params, quiet, verbose, always_yes=False):
         logger.info("initializing config\n")
         print("initializing config")
-        # os.path.join(exp_dir, 'evolver.log')
-
+        
         if experiment_params == None:
             logger.info("no configuration sent for experiment, fail to initialize")
-            return
+            return False
 
-        self.experiment_params = experiment_params
-        self.exp_name = experiment_params["name"]
-        # self.exp_dir = os.path.join(SAVE_PATH, self.exp_name)
-        self.exp_dir = os.path.join(EXPERIMENT_DATA_PATH, self.exp_name)
-        self.operation_mode = experiment_params["function"]
-        self.active_vials = [i["vial"] for i in experiment_params["vial_configuration"]]
-        print(self.active_vials)
+        exp_dir = os.path.join(EXPERIMENT_DATA_PATH, experiment_params["name"])
+        if os.path.exists(exp_dir):
+            logger.info("change experiment name")
+            return False
+  
+        vials = [conf['vial'] for conf in experiment_params["vial_configuration"]]
 
-        if os.path.exists(self.exp_dir):
-            setup_logging(os.path.join(self.exp_dir, "evolver.log"), quiet, verbose)
-            logger.info("found an existing experiment, overwriting")
-            exp_continue = "y" if always_yes else "n"
-        else:
-            exp_continue = "n"
+        for vial in vials:
+            if self.active_exp[vial] != experiment_params["name"]:
+                logger.info("vial selected is already in use, stop experiment first")
+                return False
 
-        if exp_continue == "y":
-            # load existing experiment
-            """pickle_name =  "{0}.pickle".format(self.exp_dir)
-            pickle_path = os.path.join(self.exp_dir, pickle_name)
-            logger.info('loading previous experiment data: %s' % pickle_path)
+        if self.temp_cal is None or self.pump_cal is None: # or (None in self.od_cals):
+            logger.info("no calibration set")
+            return False
+        
+        if not self.check_calibration(experiment_params["od_cal"]):
+            logger.info("od_cal doesnt exist")
+            return False
+                
+        for vial in vials:
+            self.od_cals[vial] = experiment_params["od_cal"]
+            self.active_cals[vial] = {
+                "od": self.get_cal_coefficients(vial, experiment_params["od_cal"]),
+                "temp": self.get_cal_coefficients(vial, self.temp_cal),
+                "pump": self.get_cal_coefficients(vial, self.pump_cal)
+            }
 
-            with open(pickle_path, 'rb') as f:
-                loaded_var  = pickle.load(f)
+        exp_dict = {
+            "name": experiment_params["name"],
+            "mode": experiment_params["funtion"],
+            "vials": [conf['vial'] for conf in experiment_params["vial_configuration"]]
+        }
 
-            x = loaded_var
-            start_time = x[0]
-            self.OD_initial = x[1]"""
+        if exp_dict in self.exps_ocurring:
+            logger.info("experiment already exists and is running")
+            return False
+        
+        self.exps_ocurring += [exp_dict]
 
-            with open(os.path.join(self.exp_dir, "exp_config.json")) as file:
-                retireved_params = json.load(file)
+        for i,vial in enumerate(vials):
+            self.exp_configs[vial] = {
+                "name": experiment_params["name"],
+                "mode": experiment_params["function"],
+                "config": experiment_params["vial_configuration"][i]
+            }
 
-            self.exp_name = retireved_params["exp_name"]
-            self.exp_dir = retireved_params["directory"]
-            self.operation_mode = retireved_params["operation_mode"]
-            self.use_blank = retireved_params["use_blank"]
-            self.OD_initial = retireved_params["OD_initial"]
-            self.active_vials = retireved_params["active_vials"]
-            self.experiment_params = retireved_params["experiment_params"]
+        logger.debug("creating data directories")
+        os.makedirs(exp_dir)
 
-        else:
-            if os.path.exists(self.exp_dir):
-                shutil.rmtree(self.exp_dir)
-                """
-                exp_overwrite = 'y' if always_yes else 'n'
-                logger.info('data directory already exists')
+        path_config = os.path.join(exp_dir, "exp_config.json")
+        experiment_params["temp_cal"] = self.temp_cal
+        experiment_params["pump_cal"] = self.pump_cal
 
-                if exp_overwrite == 'y':
-                    logger.info('deleting existing data directory')
-                    shutil.rmtree(self.exp_dir)
+        with open(path_config, "w") as file:
+            json.dump((experiment_params), file, indent = 4)
 
-                else:
-                    print('Change experiment name in custom_script.py and then restart...')
-                    logger.warning('not deleting existing data directory, exiting')
-                    sys.exit(1)
-                """
+        os.makedirs(os.path.join(exp_dir, "OD"))
+        os.makedirs(os.path.join(exp_dir, "od_135_raw"))
+        os.makedirs(os.path.join(exp_dir, "ODset"))
+        os.makedirs(os.path.join(exp_dir, "growthrate"))
 
-            logger.debug("creating data directories")
-            path_config = os.path.join(self.exp_dir, "exp_config.json")
-            os.makedirs(self.exp_dir)
+        os.makedirs(os.path.join(exp_dir, "temp"))
+        os.makedirs(os.path.join(exp_dir, "temp_raw"))
+        os.makedirs(os.path.join(exp_dir, "temp_config"))
 
-            if os.path.exists(path_config):
-                print("existe")
+        os.makedirs(os.path.join(exp_dir, "pump_out_log"))
+        os.makedirs(os.path.join(exp_dir, "pump_in_log"))
+        os.makedirs(os.path.join(exp_dir, "chemo_config"))
+        setup_logging(os.path.join(exp_dir, "evolver.log"), quiet, verbose)
 
-            with open(path_config, "w") as file:
-                json.dump(
-                    (
-                        {
-                            "name": self.exp_name,
-                            "directory": self.exp_dir,
-                            "operation_mode": self.operation_mode,
-                            "use_blank": self.use_blank,
-                            "OD_initial": str(self.OD_initial),
-                            "active_vials": self.active_vials,
-                            "experiment_params": self.experiment_params,
-                        }
-                    ),
-                    file, indent = 4
-                )
+        for i,vial in enumerate(vials):
+            exp_str = "Experiment: {0} vial {1}, {2}".format(
+                    experiment_params["name"], vial+1, time.strftime("%c")
+            )
 
-            os.makedirs(os.path.join(self.exp_dir, "OD"))
-            os.makedirs(os.path.join(self.exp_dir, "od_135_raw"))
-            os.makedirs(os.path.join(self.exp_dir, "ODset"))
-            os.makedirs(os.path.join(self.exp_dir, "growthrate"))
+            # make OD file
+            self._create_file(vial+1, "OD", defaults=[exp_str])
+            self._create_file(vial+1, "od_135_raw")
 
-            os.makedirs(os.path.join(self.exp_dir, "temp"))
-            os.makedirs(os.path.join(self.exp_dir, "temp_raw"))
-            os.makedirs(os.path.join(self.exp_dir, "temp_config"))
+            # make temperature data file
+            self._create_file(vial+1, "temp")
+            self._create_file(vial+1, "temp_raw")
 
-            os.makedirs(os.path.join(self.exp_dir, "pump_out_log"))
-            os.makedirs(os.path.join(self.exp_dir, "pump_in_log"))
-            os.makedirs(os.path.join(self.exp_dir, "chemo_config"))
-            setup_logging(os.path.join(self.exp_dir, "evolver.log"), quiet, verbose)
+            # make temperature configuration file
+            self._create_file(vial+1, "temp_config", defaults=[exp_str, "0,{0}".format(experiment_params["vial_configuration"][i]["temp"])])
 
-            for x in self.active_vials:
-                exp_str = "Experiment: {0} vial {1}, {2}".format(
-                    self.exp_name, x+1, time.strftime("%c")
-                )
+            # make pump log file
+            self._create_file(vial+1, "pump_in_log", defaults=[exp_str, "0,0"])
+            self._create_file(vial+1, "pump_out_log", defaults=[exp_str, "0,0"])
 
-                # make OD file
-                self._create_file(x+1, "OD", defaults=[exp_str])
-                self._create_file(x+1, "od_135_raw")
+            # make ODset file
+            self._create_file(vial+1, "ODset", defaults=[exp_str, "0,0"])
 
-                # make temperature data file
-                self._create_file(x+1, "temp")
-                self._create_file(x+1, "temp_raw")
+            # make growth rate file
+            self._create_file(vial+1, "gr", defaults=[exp_str, "0,0"], directory="growthrate")
 
-                # make temperature configuration file
-                self._create_file(
-                    x+1, "temp_config", defaults=[exp_str, "0,{0}".format(TEMP[x])]
-                )
-
-                # make pump log file
-                self._create_file(x+1, "pump_in_log", defaults=[exp_str, "0,0"])
-                self._create_file(x+1, "pump_out_log", defaults=[exp_str, "0,0"])
-
-                # make ODset file
-                self._create_file(x+1, "ODset", defaults=[exp_str, "0,0"])
-
-                # make growth rate file
-                self._create_file(
-                    x+1, "gr", defaults=[exp_str, "0,0"], directory="growthrate"
-                )
-
-                # make chemostat file
-                self._create_file(
-                    x+1,
-                    "chemo_config",
-                    defaults=["0,0,0", "0,0,0"],
-                    directory="chemo_config",
-                )
+            # make chemostat file
+            self._create_file(
+                vial+1,
+                "chemo_config",
+                defaults=["0,0,0", "0,0,0"],
+                directory="chemo_config",
+            )
 
         return True
 
-    def initialize_exp(self, exp_name, always_yes=False):
+
+    def initialize_exp(self, exp_name):
         logger.info("initializing experiment")
         print("initializing experiment")
 
-        if os.path.exists(os.path.join(EXPERIMENT_DATA_PATH, exp_name)):
-            self.exp_dir = os.path.join(EXPERIMENT_DATA_PATH, exp_name)
+        if not os.path.exists(os.path.join(EXPERIMENT_DATA_PATH, exp_name)):
+            return False
 
-        else:
-            logger.info("no experiment configuration saved")
-            print("no experiment configuration saved")
-            return
-        
-        with open(os.path.join(self.exp_dir, "exp_config.json")) as file:
-            retireved_params = json.load(file)
-
-        self.exp_name = retireved_params["name"]
-        self.operation_mode = retireved_params["operation_mode"]
-        self.use_blank = retireved_params["use_blank"]
-        self.OD_initial = np.array(retireved_params["OD_initial"])
-        self.experiment_params = retireved_params["experiment_params"]
-        self.active_vials = retireved_params["active_vials"]
+        if exp_name not in [exp["name"] for exp in self.exps_ocurring]:
+            return False
 
         start_time = time.time()
-        self.request_calibrations()
+        start_stir = ['--'] * 16
+        start_temp = ['--'] * 16
 
-        if self.experiment_params:
-            stir_rate = list(
-                map(lambda x: x["stir"], self.experiment_params["vial_configuration"])
-            )
-            temp_values = list(
-                map(lambda x: x["temp"], self.experiment_params["vial_configuration"])
-            )
+        for i,vial_conf in enumerate(self.exp_configs):
+            if vial_conf["name"] == exp_name:
+                start_stir[i] = vial_conf["config"]["stir"]
+                self.start_time[i] = start_time
 
-        with open(TEMP_CAL_PATH) as f:
-            temp_cal = json.load(f)
-            temp_coefficients = temp_cal["coefficients"]
+                coeff = self.active_cals[i]["temp"]
+                start_temp[i] = str(int((float(vial_conf["config"]["temp"]) - coeff[1]) / coeff[0]))       
 
-        stir = ['nan'] * 16
-        temp = ['nan'] * 16
+        self.update_temperature(start_temp)
+        self.update_stir_rate(start_stir)
 
-        for k,x in enumerate(self.active_vials):
-            stir[x] = stir_rate[k]
-            temp[x] = str(int((temp_values[k] - temp_coefficients[x][1]) / temp_coefficients[x][0]))
-        
-        '''raw_temperatures = [
-            str(
-                int(
-                    (temp_values[i] - temp_coefficients[x][1]) / temp_coefficients[x][0]
-                )
-            )
-            for i,x in enumerate(self.active_vials)
-        ]'''
-
-        
-
-        self.update_temperature(temp)
-        self.update_stir_rate(stir)
-
-        exp_blank = "y" if always_yes else "n"
+        '''exp_blank = "y" if always_yes else "n"
 
         if exp_blank == "y":  # will do it with first broadcast
             self.use_blank = True
             logger.info("will use initial OD measurement as blank")
         else:
             self.use_blank = False
-            self.OD_initial = np.zeros(len(self.active_vials))
+            self.OD_initial = np.zeros(len(self.active_vials))'''
 
-        # copy current custom script to txt file
+        '''# copy current custom script to txt file
         backup_filename = "{0}_{1}.txt".format(
             self.exp_name, time.strftime("%y%m%d_%H%M")
         )
@@ -673,9 +602,12 @@ class EvolverDPU:
             os.path.join(SAVE_PATH, "custom_script.py"),
             os.path.join(self.exp_dir, backup_filename),
         )
-        logger.info("saved a copy of current custom_script.py as %s" % backup_filename)
+        logger.info("saved a copy of current custom_script.py as %s" % backup_filename)'''
 
-        self.exp_status = True
+        for i,vial_conf in enumerate(self.exp_configs):
+            if vial_conf["name"] == exp_name:
+                self.active_exp[i] = exp_name
+                
         print("Started!")
         return start_time
 
@@ -989,7 +921,7 @@ class EvolverDPU:
         Get all calibrations.
         """
         lock.acquire()
-        self.s.send(functions["getallcalibrations"]["id"].to_bytes(1, "big") + b"\r\n")
+        self.s.send(functions["get_all_calibrations"]["id"].to_bytes(1, "big") + b"\r\n")
         time.sleep(0.1)
 
         for _ in range(3):
@@ -1061,7 +993,7 @@ class EvolverDPU:
         logger.debug("appendcal")
         lock.acquire()
         self.s.send(
-            functions["appendcal"]["id"].to_bytes(1, "big")
+            functions["append_calibration"]["id"].to_bytes(1, "big")
             + bytes(json.dumps(data), "utf-8")
             + b"\r\n"
         )
@@ -1082,7 +1014,7 @@ class EvolverDPU:
         logger.debug("getcalibrationnames")
 
         lock.acquire()
-        self.s.send(functions["getcalibrationnames"]["id"].to_bytes(1, "big") + b"\r\n")
+        self.s.send(functions["get_calibration_names"]["id"].to_bytes(1, "big") + b"\r\n")
         time.sleep(0.5)
 
         for _ in range(3):
@@ -1105,6 +1037,7 @@ class EvolverDPU:
         """
         Get fit names.
         """
+        print
         lock.acquire()
         self.s.send(functions["getfitnames"]["id"].to_bytes(1, "big") + b"\r\n")
         time.sleep(0.1)
@@ -1195,11 +1128,11 @@ class EvolverDPU:
     def activecalibrations(self, data: dict):
         print("Calibrations received")
         for calibration in data:
-            if calibration["calibrationType"] == "od":
+            if calibration["calibrationtype"] == "od":
                 file_path = OD_CAL_PATH
-            elif calibration["calibrationType"] == "temperature":
+            elif calibration["calibrationtype"] == "temperature":
                 file_path = TEMP_CAL_PATH
-            elif calibration["calibrationType"] == "pump":
+            elif calibration["calibrationtype"] == "pump":
                 file_path = PUMP_CAL_PATH
             else:
                 continue
@@ -1230,7 +1163,7 @@ class EvolverDPU:
         logger.debug("requesting active calibrations")
 
         lock.acquire()
-        self.s.send(functions["getactivecal"]["id"].to_bytes(1, "big") + b"\r\n")
+        self.s.send(functions["get_active_calibrations"]["id"].to_bytes(1, "big") + b"\r\n")
         time.sleep(1)
 
         for _ in range(3):
@@ -1273,7 +1206,7 @@ class EvolverDPU:
 
     # ----- [END] Custom functions -----
 
-    def get_last_commands(self):  # x -> dict
+    """def get_last_commands(self):  # x -> dict
         logger.debug("getlastcommands")
         lock.acquire()
         self.s.send(functions["getlastcommands"]["id"].to_bytes(1, "big") + b"\r\n")
@@ -1289,7 +1222,7 @@ class EvolverDPU:
             else:
                 time.sleep(1)
 
-        # print(info)
+        # print(info)"""
 
     def get_num_commands(self):  # x -> int
         logger.debug("get_num_commands")
@@ -1310,10 +1243,10 @@ class EvolverDPU:
         # print(string_value)
         return None
 
-    def get_device_name(self):  # x -> dict
+    '''def get_device_name(self):  # x -> dict
         logger.debug("getdevicename")
         lock.acquire()
-        self.s.send(functions["getdevicename"]["id"].to_bytes(1, "big") + b"\r\n")
+        self.s.send(functions["get_device_name"]["id"].to_bytes(1, "big") + b"\r\n")
         time.sleep(1)
 
         for _ in range(3):
@@ -1326,7 +1259,7 @@ class EvolverDPU:
                 time.sleep(1)
         lock.release()
         print(info)
-        return info
+        return info'''
 
     """ Ending experiment """
 
@@ -1390,7 +1323,6 @@ def broadcast():
     global broadcastReady
     global redis_client
     global lock
-    global EVOLVER_NS
 
     while True:
         while broadcastReady:
@@ -1399,10 +1331,10 @@ def broadcast():
             if ready[0]:
                 data = broadcastSocket.recv(4096)
                 data = json.loads(data)
-                redis_client.set("broadcast", json.dumps(data))
+                
+                broadcast_gui = EVOLVER_NS.broadcast(data)
+                redis_client.set("broadcast", json.dumps(broadcast_gui))
 
-                #print("BROADCAST", data)
-                EVOLVER_NS.broadcast(data)
         time.sleep(1)
 
 
@@ -1438,12 +1370,10 @@ if __name__ == "__main__":
     redis_client = redis.StrictRedis("127.0.0.1")
     redis_client.delete("socketio_answer")
 
-    # Get params from JSON file
-    experiment_params = None
-
     # Creates eVOLVER object and turns on leds
     EVOLVER_NS = EvolverDPU()
     EVOLVER_NS.update_led([2048 for i in range(16)])
+
 
     # Start by stopping any existing experiment
     EVOLVER_NS.stop_all_pumps()
@@ -1454,7 +1384,7 @@ if __name__ == "__main__":
 
     # Creates a broadcast thread, which will receive new data from hardware from evolver-server
     bServer = Thread(target=broadcast)
-    bServer.start()
+    bServer.start()    
     print("DPU on!")
 
     while True:
@@ -1462,7 +1392,6 @@ if __name__ == "__main__":
             # wait until there is a command in the queue (Redis variable)
             # command = {"payload": bytes, "reply": boolean}
             command = redis_client.brpop("socketio")
-
             command = json.loads(command[1].decode("UTF-8", errors="ignore").lower())
 
             # When api redis writing was updated, this will no longer be necessary
@@ -1508,7 +1437,7 @@ if __name__ == "__main__":
                 )
                 lock.release()
 
-            elif command["command"] == "getactivecal":
+            elif command["command"] == "get_active_calibrations":
                 activelcal = EVOLVER_NS.request_calibrations()
                 redis_client.lpush("socketio_answer", json.dumps(activelcal))
 
