@@ -80,18 +80,16 @@ class EvolverDPU:
     global channelIdx
     global lock
 
-    exp_status = [False] * 16
-    exp_name = [None] * 16
-    exp_dir = [None] * 16
-    operation_mode = [None] * 16
-    experiment_params = [None] * 16
-    start_time = [0] * 16
+    exp_status = False
+    exp_name = None
+    exp_dir = None
+    operation_mode = None
+    active_vials = []
 
-    running_exp = []
-    running_vials = []
-    
+    start_time = 0
     use_blank = False
     OD_initial = None
+    experiment_params = None
     ip_address = None
 
     """ Inicializando DPU """
@@ -147,6 +145,7 @@ class EvolverDPU:
             temp_cal = json.load(f)
 
         # Apply calibrations and update temperatures if needed
+        vials = self.active_vials if self.exp_status else VIALS
         data = self.transform_data(data, VIALS, od_cal, temp_cal)
 
         if data is None:
@@ -171,11 +170,10 @@ class EvolverDPU:
             logger.error("could not tranform raw data, skipping user-defined functions")
             return
 
-        if len(self.running_exp) < 1:
+        if self.exp_status is False:
             return
 
-        current_time = time.time()
-        elapsed_time = [round((current_time - self.start_time[x]) / 3600, 4) for x in VIALS]
+        elapsed_time = round((time.time() - self.start_time) / 3600, 4)
 
         # Save data into .csv files
         try:
@@ -209,10 +207,10 @@ class EvolverDPU:
             return
 
         # Run custom functions
-        self.custom_functions(data, elapsed_time)
+        self.custom_functions(data, self.active_vials, elapsed_time)
 
         # save variables
-        #self.save_variables(self.start_time, self.OD_initial)
+        self.save_variables(self.start_time, self.OD_initial)
 
         # Restart logging for db/gdrive syncing
         logging.shutdown()
@@ -241,6 +239,9 @@ class EvolverDPU:
         od_data_2 = None
         #print(od_cal)
 
+        # if od_cal['type'] == THREE_DIMENSION:
+        # od_data_2 = data['data'].get(od_cal['params'][1], None)
+        #print("od_cal", od_cal)
         od_data = data["data"].get(od_cal["params"][0], None)
         temp_data = data["data"].get(temp_cal["params"][0], None)
 
@@ -324,12 +325,12 @@ class EvolverDPU:
                 logger.error("temperature read error for vial %d, setting to NaN" % x)
                 temp_value[x] = "nan"
 
-        temps = []
-        for x in vials:
-            if self.exp_dir[x] is not None:
-    
+        if self.exp_dir is not None:
+            temps = []
+
+            for x in vials:
                 file_name = "vial{0}_temp_config.txt".format(x+1)
-                file_path = os.path.join(self.exp_dir[x], "temp_config", file_name)
+                file_path = os.path.join(self.exp_dir, "temp_config", file_name)
 
                 #temp_set_data = np.genfromtxt(file_path, delimiter=",")
                 #temp_set = temp_set_data[len(temp_set_data) - 1][1]
@@ -402,47 +403,47 @@ class EvolverDPU:
             return
 
         for x in vials:
-            if self.exp_status[x]:
-                file_name = "vial{0}_{1}.txt".format(x+1, parameter)
-                file_path = os.path.join(self.exp_dir[x], parameter, file_name)
-                text_file = open(file_path, "a+")
-                text_file.write("{0},{1}\n".format(elapsed_time[x], data[x]))
-                text_file.close()
+            file_name = "vial{0}_{1}.txt".format(x+1, parameter)
+            file_path = os.path.join(self.exp_dir, parameter, file_name)
+            text_file = open(file_path, "a+")
+            text_file.write("{0},{1}\n".format(elapsed_time, data[x]))
+            text_file.close()
 
-    def custom_functions(self, data: dict, elapsed_time: float):
+    def custom_functions(self, data: dict, vials: list, elapsed_time: float):
         """
         Load user script from custom_script.py
         Run scripts corresponding to requested operation using new received data
         """
+        mode = (
+            self.experiment_params["function"]
+            if self.experiment_params
+            else self.operation_mode
+        )
 
-        for i,exp in enumerate(self.running_exp):
-            vials = self.running_vials[i]
-            mode = self.operation_mode[vials[0]]
+        if mode == "turbidostat":
+            custom_script.turbidostat(self, data, vials, elapsed_time)
 
-            if mode == "turbidostat":
-                custom_script.turbidostat(self, data, vials, elapsed_time[vials[0]])
+        elif mode == "chemostat":
+            custom_script.chemostat(self, data, vials, elapsed_time)
 
-            elif mode == "chemostat":
-                custom_script.chemostat(self, data, vials, elapsed_time[vials[0]])
+        elif mode == "growthcurve":
+            custom_script.growth_curve(self, data, vials, elapsed_time)
 
-            elif mode == "growthcurve":
-                custom_script.growth_curve(self, data, vials, elapsed_time[vials[0]])
+        else:
+            # try to load the user function
+            # if failing report to user
+            logger.info("user-defined operation mode %s" % mode)
 
-            else:
-                # try to load the user function
-                # if failing report to user
-                logger.info("user-defined operation mode %s" % mode)
+            try:
+                func = getattr(custom_script, mode)
+                func(self, data, self.active_vials, elapsed_time)
 
-                try:
-                    func = getattr(custom_script, mode)
-                    func(self, data, vials, elapsed_time[vials[0]])
-
-                except AttributeError:
-                    logger.error("could not find function %s in custom_script.py" % mode)
-                    print(
-                        "Could not find function %s in custom_script.py "
-                        "- Skipping user defined functions" % mode
-                    )
+            except AttributeError:
+                logger.error("could not find function %s in custom_script.py" % mode)
+                print(
+                    "Could not find function %s in custom_script.py "
+                    "- Skipping user defined functions" % mode
+                )
 
     def save_variables(self, start_time, OD_initial):
         # save variables needed for restarting experiment later
@@ -464,19 +465,16 @@ class EvolverDPU:
             logger.info("no configuration sent for experiment, fail to initialize")
             return
 
-        vials = [i['vial'] for i in experiment_params["vial_configuration"]]
+        self.experiment_params = experiment_params
+        self.exp_name = experiment_params["name"]
+        # self.exp_dir = os.path.join(SAVE_PATH, self.exp_name)
+        self.exp_dir = os.path.join(EXPERIMENT_DATA_PATH, self.exp_name)
+        self.operation_mode = experiment_params["function"]
+        self.active_vials = [i["vial"] for i in experiment_params["vial_configuration"]]
+        print(self.active_vials)
 
-        for i,vial in enumerate(vials):
-            self.exp_name[vial] = experiment_params["name"]
-            self.exp_dir[vial] = os.path.join(EXPERIMENT_DATA_PATH, self.exp_name[vial])
-            self.operation_mode[vial] = experiment_params["function"]
-            self.experiment_params[vial] = experiment_params["vial_configuration"][i]
-            self.od_cal = experiment_params["od_cal"]
-
-        exp_path = os.path.join(EXPERIMENT_DATA_PATH, experiment_params["name"])
-        
-        if os.path.exists(exp_path):
-            setup_logging(os.path.join(exp_path, "evolver.log"), quiet, verbose)
+        if os.path.exists(self.exp_dir):
+            setup_logging(os.path.join(self.exp_dir, "evolver.log"), quiet, verbose)
             logger.info("found an existing experiment, overwriting")
             exp_continue = "y" if always_yes else "n"
         else:
@@ -495,24 +493,37 @@ class EvolverDPU:
             start_time = x[0]
             self.OD_initial = x[1]"""
 
-            with open(os.path.join(exp_path, "exp_config.json")) as file:
+            with open(os.path.join(self.exp_dir, "exp_config.json")) as file:
                 retireved_params = json.load(file)
 
-            vials = [i['vial'] for i in retireved_params["vial_configuration"]]
+            self.exp_name = retireved_params["exp_name"]
+            self.exp_dir = retireved_params["directory"]
+            self.operation_mode = retireved_params["operation_mode"]
+            self.use_blank = retireved_params["use_blank"]
+            self.OD_initial = retireved_params["OD_initial"]
+            self.active_vials = retireved_params["active_vials"]
+            self.experiment_params = retireved_params["experiment_params"]
 
-            for i,vial in enumerate(vials):
-                self.exp_name[vial] = retireved_params["name"]
-                self.exp_dir[vial] = retireved_params["directory"]
-                self.operation_mode[vial] = retireved_params["operation_mode"]
-                self.experiment_params[vial] = retireved_params["vial_configuration"][i]
-                self.od_cal = retireved_params["od_cal"]
         else:
-            if os.path.exists(exp_path):
-                shutil.rmtree(exp_path)
+            if os.path.exists(self.exp_dir):
+                shutil.rmtree(self.exp_dir)
+                """
+                exp_overwrite = 'y' if always_yes else 'n'
+                logger.info('data directory already exists')
+
+                if exp_overwrite == 'y':
+                    logger.info('deleting existing data directory')
+                    shutil.rmtree(self.exp_dir)
+
+                else:
+                    print('Change experiment name in custom_script.py and then restart...')
+                    logger.warning('not deleting existing data directory, exiting')
+                    sys.exit(1)
+                """
 
             logger.debug("creating data directories")
-            path_config = os.path.join(exp_path, "exp_config.json")
-            os.makedirs(exp_path)
+            path_config = os.path.join(self.exp_dir, "exp_config.json")
+            os.makedirs(self.exp_dir)
 
             if os.path.exists(path_config):
                 print("existe")
@@ -521,33 +532,35 @@ class EvolverDPU:
                 json.dump(
                     (
                         {
-                            "name": experiment_params["name"],
-                            "directory": exp_path,
-                            "operation_mode": experiment_params["function"],
-                            "od_cal": experiment_params["od_cal"],
-                            "vial_configuration": experiment_params["vial_configuration"],
+                            "name": self.exp_name,
+                            "directory": self.exp_dir,
+                            "operation_mode": self.operation_mode,
+                            "use_blank": self.use_blank,
+                            "OD_initial": str(self.OD_initial),
+                            "active_vials": self.active_vials,
+                            "experiment_params": self.experiment_params,
                         }
                     ),
                     file, indent = 4
                 )
 
-            os.makedirs(os.path.join(exp_path, "OD"))
-            os.makedirs(os.path.join(exp_path, "od_135_raw"))
-            os.makedirs(os.path.join(exp_path, "ODset"))
-            os.makedirs(os.path.join(exp_path, "growthrate"))
+            os.makedirs(os.path.join(self.exp_dir, "OD"))
+            os.makedirs(os.path.join(self.exp_dir, "od_135_raw"))
+            os.makedirs(os.path.join(self.exp_dir, "ODset"))
+            os.makedirs(os.path.join(self.exp_dir, "growthrate"))
 
-            os.makedirs(os.path.join(exp_path, "temp"))
-            os.makedirs(os.path.join(exp_path, "temp_raw"))
-            os.makedirs(os.path.join(exp_path, "temp_config"))
+            os.makedirs(os.path.join(self.exp_dir, "temp"))
+            os.makedirs(os.path.join(self.exp_dir, "temp_raw"))
+            os.makedirs(os.path.join(self.exp_dir, "temp_config"))
 
-            os.makedirs(os.path.join(exp_path, "pump_out_log"))
-            os.makedirs(os.path.join(exp_path, "pump_in_log"))
-            os.makedirs(os.path.join(exp_path, "chemo_config"))
-            setup_logging(os.path.join(exp_path, "evolver.log"), quiet, verbose)
+            os.makedirs(os.path.join(self.exp_dir, "pump_out_log"))
+            os.makedirs(os.path.join(self.exp_dir, "pump_in_log"))
+            os.makedirs(os.path.join(self.exp_dir, "chemo_config"))
+            setup_logging(os.path.join(self.exp_dir, "evolver.log"), quiet, verbose)
 
             for x in self.active_vials:
                 exp_str = "Experiment: {0} vial {1}, {2}".format(
-                    self.exp_name[x], x+1, time.strftime("%c")
+                    self.exp_name, x+1, time.strftime("%c")
                 )
 
                 # make OD file
@@ -590,25 +603,23 @@ class EvolverDPU:
         print("initializing experiment")
 
         if os.path.exists(os.path.join(EXPERIMENT_DATA_PATH, exp_name)):
-            exp_path = os.path.join(EXPERIMENT_DATA_PATH, exp_name)
+            self.exp_dir = os.path.join(EXPERIMENT_DATA_PATH, exp_name)
 
         else:
             logger.info("no experiment configuration saved")
             print("no experiment configuration saved")
             return
-
-        with open(os.path.join(exp_path, "exp_config.json")) as file:
-            retireved_params = json.load(file)
         
-        vials = [i['vial'] for i in retireved_params["vial_configuration"]]
+        with open(os.path.join(self.exp_dir, "exp_config.json")) as file:
+            retireved_params = json.load(file)
 
-        for vial in vials:
-            if self.exp_name[vial] != retireved_params["name"]:
-                return
-            
-        self.running_exp += [exp_name]
-        self.running_vials += [vials]
- 
+        self.exp_name = retireved_params["name"]
+        self.operation_mode = retireved_params["operation_mode"]
+        self.use_blank = retireved_params["use_blank"]
+        self.OD_initial = np.array(retireved_params["OD_initial"])
+        self.experiment_params = retireved_params["experiment_params"]
+        self.active_vials = retireved_params["active_vials"]
+
         start_time = time.time()
         self.request_calibrations()
 
@@ -640,6 +651,8 @@ class EvolverDPU:
             for i,x in enumerate(self.active_vials)
         ]'''
 
+        
+
         self.update_temperature(temp)
         self.update_stir_rate(stir)
 
@@ -654,20 +667,17 @@ class EvolverDPU:
 
         # copy current custom script to txt file
         backup_filename = "{0}_{1}.txt".format(
-            exp_name, time.strftime("%y%m%d_%H%M")
+            self.exp_name, time.strftime("%y%m%d_%H%M")
         )
         shutil.copy(
             os.path.join(SAVE_PATH, "custom_script.py"),
-            os.path.join(exp_path, backup_filename),
+            os.path.join(self.exp_dir, backup_filename),
         )
         logger.info("saved a copy of current custom_script.py as %s" % backup_filename)
 
-        for vial in vials:
-            self.exp_status[vial] = True
-            self.start_time[vial] = start_time
-
+        self.exp_status = True
         print("Started!")
-        return "started"
+        return start_time
 
     def _create_file(self, vial, param, directory=None, defaults=None):
         """
@@ -680,7 +690,7 @@ class EvolverDPU:
             directory = param
 
         file_name = "vial{0}_{1}.txt".format(vial, param)
-        file_path = os.path.join(self.exp_dir[vial], directory, file_name)
+        file_path = os.path.join(self.exp_dir, directory, file_name)
         text_file = open(file_path, "w")
 
         for default in defaults:
@@ -823,7 +833,7 @@ class EvolverDPU:
         ODfile_name = "vial{0}_OD.txt".format(vial)
 
         # Grab Data and make setpoint
-        OD_path = os.path.join(self.exp_dir[vial], "OD", ODfile_name)
+        OD_path = os.path.join(self.exp_dir, "OD", ODfile_name)
         OD_data = np.genfromtxt(OD_path, delimiter=",")
 
         raw_time = OD_data[:, 0]
@@ -848,7 +858,7 @@ class EvolverDPU:
 
         # Save slope to file
         file_name = "vial{0}_gr.txt".format(vial)
-        gr_path = os.path.join(self.exp_dir[vial], "growthrate", file_name)
+        gr_path = os.path.join(self.exp_dir, "growthrate", file_name)
         text_file = open(gr_path, "a+")
         text_file.write("{0},{1}\n".format(elapsed_time, slope))
         text_file.close()
@@ -1471,7 +1481,7 @@ if __name__ == "__main__":
                     )
 
             elif command["command"] == "expt-start":
-                EVOLVER_NS.initialize_exp(
+                EVOLVER_NS.start_time = EVOLVER_NS.initialize_exp(
                     command["payload"]["name"], False
                 )
 
@@ -1484,9 +1494,7 @@ if __name__ == "__main__":
                     EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
                 else:
                     EVOLVER_NS.stop_exp()
-                    print('a')
-                
-                print('b')
+
                 redis_client.lpush(
                     "socketio_answer", json.dumps({"expt-stopped": None})
                 )
