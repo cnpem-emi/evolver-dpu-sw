@@ -131,7 +131,11 @@ class EvolverDPU:
         This method converts raw data into real values and ask for new step from custom functions.
         """
 
+        global redis_client
         print("\nBroadcast received", data)
+        
+        data["active vials"] = self.active_vials
+        redis_client.set("broadcast", json.dumps(data))
 
         # Check if calibration files are available
         if not self.check_for_calibrations():
@@ -164,6 +168,7 @@ class EvolverDPU:
         '''
         print("OD: ", data["transformed"]["od"])
         print("Temp: ", data["transformed"]["temp"])
+        #print("Vials: {} ({})".format(vials, self.active_vials))
         print()
 
         if data is None:
@@ -1351,20 +1356,26 @@ class EvolverDPU:
         lock.release()
 
     def stop_some_vials(self, vials: list):
-        pump = ["--" for i in range(48)]
-        temp = ['nan' for i in range(16)]
-        stir = ['nan' for i in range(16)]
+        if vials != []:
+            pump = ["--" for i in range(48)]
+            temp = ['nan' for i in range(16)]
+            stir = ['nan' for i in range(16)]
 
-        for vial in vials:
-            pump[vial] = 0
-            pump[vial + 16] = 0
-            pump[vial + 32] = 0
-            stir[vial] = 0
-            temp[vial] = 4095
+            for vial in vials:
+                pump[vial] = 0
+                pump[vial + 16] = 0
+                pump[vial + 32] = 0
+                stir[vial] = 0
+                temp[vial] = 4095
 
-        self.update_temperature(temp)
-        self.update_stir_rate(stir)
-        self.fluid_command(pump)
+            self.update_temperature(temp)
+            self.update_stir_rate(stir)
+            self.fluid_command(pump)
+
+            for vial in vials:
+                if vial in self.active_vials:
+                    self.active_vials.remove(vial)
+
 
     def stop_exp(self):
         """
@@ -1388,7 +1399,6 @@ def broadcast():
     """
     global broadcastSocket
     global broadcastReady
-    global redis_client
     global lock
     global EVOLVER_NS
 
@@ -1399,7 +1409,7 @@ def broadcast():
             if ready[0]:
                 data = broadcastSocket.recv(4096)
                 data = json.loads(data)
-                redis_client.set("broadcast", json.dumps(data))
+                
 
                 #print("BROADCAST", data)
                 EVOLVER_NS.broadcast(data)
@@ -1490,11 +1500,11 @@ if __name__ == "__main__":
                 )
 
             elif command["command"] == "expt-stop":
-                if "vials" in command["payload"].keys():
-                    EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
-                else:
+                if len(command["payload"]["vials"]) == 16:
                     EVOLVER_NS.stop_exp()
-
+                else:
+                    EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
+                    
                 redis_client.lpush(
                     "socketio_answer", json.dumps({"expt-stopped": None})
                 )
