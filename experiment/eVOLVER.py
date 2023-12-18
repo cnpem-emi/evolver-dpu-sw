@@ -633,6 +633,19 @@ class EvolverDPU:
         
         vials = [i['vial'] for i in retireved_params["vial_configuration"]]
 
+        if exp_name in self.running_exp:
+            '''ind = self.running_exp.index(exp_name)
+
+            for vial in vials:
+                if vial not in self.running_vials[ind]:
+                    self.running_vials[ind] += [vial]
+                    self.exp_name[vial] = retireved_params["name"]
+                    self.exp_dir[vial] = retireved_params["directory"]
+                    self.operation_mode[vial] = retireved_params["operation_mode"]
+                    self.experiment_params[vial] = retireved_params["vial_configuration"],'''
+            print('already running, try something else')
+            return
+
         for i,vial in enumerate(vials):
             if self.exp_name[vial] != retireved_params["name"]:
                 if self.exp_name[vial] is None:
@@ -1054,7 +1067,7 @@ class EvolverDPU:
         for calibration in all_calibrations:
             if calibration["name"] == data["name"]:
                 with open(TEMP_CAL_PATH, "w") as f:
-                    json.dump(calibration, f)
+                    json.dump(calibration["fits"][0], f)
                 response = {"message": "temp calibration set"}
                 return response
         
@@ -1070,7 +1083,7 @@ class EvolverDPU:
         for calibration in all_calibrations:
             if calibration["name"] == data["name"]:
                 with open(PUMP_CAL_PATH, "w") as f:
-                    json.dump(calibration, f)
+                    json.dump(calibration["fits"][0], f)
                 response = {"message": "pump calibration set"}
                 return response
         
