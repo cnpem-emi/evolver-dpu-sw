@@ -89,6 +89,9 @@ class EvolverDPU:
 
     running_exp = []
     running_vials = []
+
+    temp_cal = None
+    pump_cal = None
     
     use_blank = False
     OD_initial = None
@@ -134,21 +137,41 @@ class EvolverDPU:
         """
         global redis_client
 
-        print("\nBroadcast received", data)
-        data['experiments'] = self.exp_name
+        #print("\nBroadcast received", data)
+
+        with open(OD_CAL_PATH) as f:
+            od_cal = json.load(f)
+
+        expt_configs = {}
+
+        for i,exp in enumerate(self.running_exp):
+            expt_configs[exp] = {
+                "name": exp,
+                "function": self.operation_mode[self.running_vials[i][0]],
+                "ip": data["ip"],
+                "vial_configuration": [self.experiment_params[j] for j in self.running_vials[i]],
+                "od_cal": od_cal["name"]
+            }
+
+        data["active_experiments"] = self.running_exp
+        data["expt_config"] = expt_configs
+
+        with open(TEMP_CAL_PATH) as f:
+            temp_cal = json.load(f)
+
+        with open(PUMP_CAL_PATH) as f:
+            pump_cal = json.load(f)
+
+        data["temp_cal"] = temp_cal["name"]
+        data["pump_cal"] = pump_cal["name"]
+
         redis_client.set("broadcast", json.dumps(data))
-        print(self.running_exp,self.running_vials)
+        print(data)
 
         # Check if calibration files are available
         if not self.check_for_calibrations():
             print("Calibration files still missing, skipping custom functions")
             return
-
-        with open(OD_CAL_PATH) as f:
-            od_cal = json.load(f)
-
-        with open(TEMP_CAL_PATH) as f:
-            temp_cal = json.load(f)
 
         # Apply calibrations and update temperatures if needed
         data = self.transform_data(data, VIALS, od_cal, temp_cal)
@@ -1016,10 +1039,10 @@ class EvolverDPU:
             if calibration["name"] == data["name"]:
                 with open(OD_CAL_PATH, "w") as f:
                     json.dump(calibration["fits"][0], f)
-                response = {"message": "temp calibration set"}
+                response = {"message": "od calibration set"}
                 return response
 
-        response = {"message": "temp calibration not set"}
+        response = {"message": "od calibration not set"}
         return response
 
     def settempcalibration(self, data: dict) -> str:
@@ -1032,7 +1055,7 @@ class EvolverDPU:
             if calibration["name"] == data["name"]:
                 with open(TEMP_CAL_PATH, "w") as f:
                     json.dump(calibration, f)
-                response = {"message": "calibration set"}
+                response = {"message": "temp calibration set"}
                 return response
 
     def appendcal(self, data: dict):
