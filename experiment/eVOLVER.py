@@ -1057,6 +1057,25 @@ class EvolverDPU:
                     json.dump(calibration, f)
                 response = {"message": "temp calibration set"}
                 return response
+        
+        response = {"message": "temp calibration not set"}
+        return response
+    
+    def setpumpcalibration(self, data: dict) -> str:
+        """
+        Get all calibration from server and write to pump_cal.json
+        the calibration with name data["name"].
+        """
+        all_calibrations = self.get_all_calibrations()
+        for calibration in all_calibrations:
+            if calibration["name"] == data["name"]:
+                with open(PUMP_CAL_PATH, "w") as f:
+                    json.dump(calibration, f)
+                response = {"message": "pump calibration set"}
+                return response
+        
+        response = {"message": "pump calibration not set"}
+        return response
 
     def appendcal(self, data: dict):
         """
@@ -1590,6 +1609,10 @@ if __name__ == "__main__":
 
             elif command["command"] == "settempcalibration":
                 ans = EVOLVER_NS.settempcalibration(command["payload"])
+                redis_client.lpush("socketio_answer", json.dumps(ans))
+            
+            elif command["command"] == "setpumpcalibration":
+                ans = EVOLVER_NS.setpumpcalibration(command["payload"])
                 redis_client.lpush("socketio_answer", json.dumps(ans))
 
             else:
