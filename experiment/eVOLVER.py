@@ -80,6 +80,27 @@ class EvolverDPU:
     global channelIdx
     global lock
 
+    experiments = [
+        {"name":[],
+         "vials":[]}
+    ]
+    vials = [
+        {
+            "status": False,
+            "exp_name": None,
+            "exp_dir": None,
+            "mode": None,
+            "start_time": None,
+            "config": [],
+            "od_cal": None,
+            "temp_cal": None,
+            "pump_cal": None,
+            "od_coeff": [],
+            "temp_coeff": [],
+            "pump_coeff": None
+        }
+    ] * 16
+
     exp_status = [False] * 16
     exp_name = [None] * 16
     exp_dir = [None] * 16
@@ -162,6 +183,7 @@ class EvolverDPU:
         with open(PUMP_CAL_PATH) as f:
             pump_cal = json.load(f)
 
+        data["od_cal"] = od_cal["name"]
         data["temp_cal"] = temp_cal["name"]
         data["pump_cal"] = pump_cal["name"]
 
@@ -1421,12 +1443,9 @@ class EvolverDPU:
         temperature set to "zero" and stir stopped
         """
         print("Stopping experiment")
-        self.stop_all_pumps()
-        self.update_temperature([4095] * 16)
-        self.update_stir_rate([0] * 16)
-
         ind = self.running_exp.index(exp_name)
         vials = self.running_vials[ind]
+        self.stop_some_vials(vials)
 
         for vial in vials:
             self.exp_status[vial] = False
@@ -1438,6 +1457,12 @@ class EvolverDPU:
 
         self.running_exp.remove(exp_name)
         self.running_vials.remove(vials)
+
+    def stop_everything(self):
+        self.stop_all_pumps()
+        self.update_temperature([4095] * 16)
+        self.update_stir_rate([0] * 16)
+
 
 
 
@@ -1637,7 +1662,7 @@ if __name__ == "__main__":
             try:
                 print("Ctrl-C detected, pausing experiment")
                 logger.warning("interrupt received, pausing experiment")
-                EVOLVER_NS.stop_exp()
+                EVOLVER_NS.stop_everything()
                 # stop receiving broadcasts
                 EVOLVER_NS.disconnect()
 
@@ -1654,7 +1679,7 @@ if __name__ == "__main__":
             except KeyboardInterrupt:
                 print("Second Ctrl-C detected, shutting down")
                 logger.warning("second interrupt received, terminating experiment")
-                EVOLVER_NS.stop_exp()
+                EVOLVER_NS.stop_everything()
                 print("Experiment stopped, goodbye!")
                 logger.warning("experiment stopped, goodbye!")
                 break
@@ -1663,7 +1688,7 @@ if __name__ == "__main__":
             logger.critical("exception %s stopped the experiment" % str(e))
             print('error "%s" stopped the experiment' % str(e))
             traceback.print_exc(file=sys.stdout)
-            EVOLVER_NS.stop_exp()
+            EVOLVER_NS.stop_everything()
             print("Experiment stopped, goodbye!")
             logger.warning("experiment stopped, goodbye!")
             break
@@ -1671,4 +1696,4 @@ if __name__ == "__main__":
     # stop experiment one last time
     # covers corner case where user presses Ctrl-C twice quickly
     EVOLVER_NS.connect()
-    EVOLVER_NS.stop_exp()
+    EVOLVER_NS.stop_everything()
