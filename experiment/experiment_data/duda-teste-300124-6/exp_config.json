@@ -1,0 +1,24 @@
+{
+    "name": "duda-teste-300124-6",
+    "directory": "/srv/git/evolver-dpu-sw/experiment/experiment_data/duda-teste-300124-6",
+    "operation_mode": "growthcurve",
+    "od_cal": "calibration_ypd_031023",
+    "vial_configuration": [
+        {
+            "vial": 0,
+            "rate": 0.5,
+            "startod": 0.3,
+            "starttime": 2,
+            "stir": 30,
+            "temp": 30
+        },
+        {
+            "vial": 1,
+            "rate": 0.5,
+            "startod": 0.3,
+            "starttime": 2,
+            "stir": 30,
+            "temp": 30
+        }
+    ]
+}

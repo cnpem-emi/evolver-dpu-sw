@@ -165,14 +165,21 @@ class EvolverDPU:
 
         expt_configs = {}
 
+        print(self.running_vials, self.running_exp)
         for i,exp in enumerate(self.running_exp):
-            expt_configs[exp] = {
-                "name": exp,
-                "function": self.operation_mode[self.running_vials[i][0]],
-                "ip": data["ip"],
-                "vial_configuration": [self.experiment_params[j] for j in self.running_vials[i]],
-                "od_cal": od_cal["name"]
-            }
+            if len(self.running_vials[i]) == 0:
+                self.running_exp.remove(exp)
+                self.running_vials.remove([])
+
+            else:
+                if len(self.running_vials[i]) != 0:
+                    expt_configs[exp] = {
+                        "name": exp,
+                        "function": self.operation_mode[self.running_vials[i][0]],
+                        "ip": data["ip"],
+                        "vial_configuration": [self.experiment_params[j] for j in self.running_vials[i]],
+                        "od_cal": od_cal["name"]
+                    }
 
         data["active_experiments"] = self.running_exp
         data["expt_config"] = expt_configs
@@ -1067,13 +1074,12 @@ class EvolverDPU:
         """
         all_calibrations = self.get_all_calibrations()
         print("\n\n")
-        print(len(all_calibrations))
+        print(f"Number of calibrations: {len(all_calibrations)}")
         for calibration in all_calibrations:
-            print(calibration)
-            print("\n\n")
-            if calibration["name"] == data["name"]:
+            print(calibration["name"], data["name"])
+            if calibration["name"].lower() == data["name"]:
                 with open(OD_CAL_PATH, "w") as f:
-                    json.dump(calibration["fits"][0], f)
+                    json.dump(calibration["fits"][0], f, indent=4)
                 response = {"message": "od calibration set"}
                 return response
 
@@ -1089,7 +1095,7 @@ class EvolverDPU:
         for calibration in all_calibrations:
             if calibration["name"] == data["name"]:
                 with open(TEMP_CAL_PATH, "w") as f:
-                    json.dump(calibration["fits"][0], f)
+                    json.dump(calibration["fits"][0], f, indent=4)
                 response = {"message": "temp calibration set"}
                 return response
         
@@ -1105,7 +1111,7 @@ class EvolverDPU:
         for calibration in all_calibrations:
             if calibration["name"] == data["name"]:
                 with open(PUMP_CAL_PATH, "w") as f:
-                    json.dump(calibration["fits"][0], f)
+                    json.dump(calibration["fits"][0], f, indent=4)
                 response = {"message": "pump calibration set"}
                 return response
         
@@ -1410,6 +1416,15 @@ class EvolverDPU:
         lock.release()
 
     def stop_some_vials(self, vials: list):
+        remove_indx = []
+
+        for vial in vials:
+            if self.exp_name[vial] is None:
+                remove_indx += [vial]
+        
+        for ind in remove_indx:
+            vials.remove(ind)
+
         pump = ["--" for i in range(48)]
         temp = ['nan' for i in range(16)]
         stir = ['nan' for i in range(16)]
@@ -1435,28 +1450,16 @@ class EvolverDPU:
             self.operation_mode[vial] = None
             self.experiment_params[vial] = None
             self.start_time[vial] = 0
+        
+        for i, vials_exp in enumerate(self.running_vials):
+            if vials_exp == []:
+                self.running_vials.remove([])
+                self.running_exp.remove(self.running_exp[i])
 
+        for exp in self.running_exp:
+            if exp not in self.exp_name:
+                self.running_exp.remove(exp)
 
-    def stop_exp(self, exp_name):
-        """
-        Stop an experiment means stopping all pumps :D
-        temperature set to "zero" and stir stopped
-        """
-        print("Stopping experiment")
-        ind = self.running_exp.index(exp_name)
-        vials = self.running_vials[ind]
-        self.stop_some_vials(vials)
-
-        for vial in vials:
-            self.exp_status[vial] = False
-            self.exp_name[vial] = None
-            self.exp_dir[vial] = None
-            self.operation_mode[vial] = None
-            self.experiment_params[vial] = None
-            self.start_time[vial] = 0
-
-        self.running_exp.remove(exp_name)
-        self.running_vials.remove(vials)
 
     def stop_everything(self):
         self.stop_all_pumps()
@@ -1577,11 +1580,7 @@ if __name__ == "__main__":
                 )
 
             elif command["command"] == "expt-stop":
-                if "vials" in command["payload"].keys():
-                    EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
-                else:
-                    EVOLVER_NS.stop_exp(command["payload"]["name"])
-                    print('a')
+                EVOLVER_NS.stop_some_vials(command["payload"]["vials"])
                 
                 print('b')
                 redis_client.lpush(

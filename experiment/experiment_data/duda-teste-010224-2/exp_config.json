@@ -1,0 +1,15 @@
+{
+    "name": "duda-teste-010224-2",
+    "directory": "/srv/git/evolver-dpu-sw/experiment/experiment_data/duda-teste-010224-2",
+    "operation_mode": "turbidostat",
+    "od_cal": "calibration_ypd_031023",
+    "vial_configuration": [
+        {
+            "vial": 6,
+            "temp": 30,
+            "stir": 30,
+            "upper": 0.85,
+            "lower": 0.3
+        }
+    ]
+}
